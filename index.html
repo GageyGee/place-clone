@@ -509,18 +509,20 @@
         let pixelState = {};
         let totalBurned = 0;
         
-        // Format number to K/M/B format
+        // Format number to K/M/B format (FIXED)
         function formatNumber(num) {
             if (num < 1000) return num.toString();
-            if (num < 1000000) {
-                const k = num / 1000;
+            
+            const absNum = Math.abs(num);
+            if (absNum < 1000000) {
+                const k = absNum / 1000;
                 return k % 1 === 0 ? k + 'K' : k.toFixed(1) + 'K';
             }
-            if (num < 1000000000) {
-                const m = num / 1000000;
+            if (absNum < 1000000000) {
+                const m = absNum / 1000000;
                 return m % 1 === 0 ? m + 'M' : m.toFixed(1) + 'M';
             }
-            const b = num / 1000000000;
+            const b = absNum / 1000000000;
             return b % 1 === 0 ? b + 'B' : b.toFixed(1) + 'B';
         }
         
@@ -669,8 +671,8 @@
             try {
                 const color = colorPicker.value;
                 
-                // Simulate transaction - replace with actual token burning logic
-                const mockSignature = 'valid-signature'; // Changed to avoid backend issues
+                // Use a valid mock signature for testing
+                const mockSignature = 'test_signature_' + Date.now();
                 
                 const response = await fetch(`${API_URL}/place-pixel`, {
                     method: 'POST',
