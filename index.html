@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SolPlace - Pixel Art on Solana</title>
-    <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.js"></script>
-    <script src="https://unpkg.com/@solana/spl-token@latest/lib/index.iife.js"></script>
+    <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+    <script src="https://unpkg.com/@solana/spl-token@0.3.7/lib/index.iife.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
@@ -40,7 +40,7 @@
         #canvas {
             cursor: crosshair;
             image-rendering: pixelated;
-            background-color: #ffffff;
+            background-color: white !important;
             border: 2px solid #333;
             border-radius: 8px;
             transition: transform 0.1s ease;
@@ -56,6 +56,7 @@
             gap: 24px;
             backdrop-filter: blur(10px);
             position: relative;
+            overflow-y: auto;
         }
         
         .logo {
@@ -87,7 +88,7 @@
             background: linear-gradient(45deg, #00FFA3, #03E1FF);
             border: none;
             border-radius: 8px;
-            color: #ffffff;
+            color: #ffffff !important;
             font-size: 15px;
             font-weight: 600;
             cursor: pointer;
@@ -106,14 +107,20 @@
             transform: none;
             box-shadow: none;
             cursor: not-allowed;
-            color: #888;
+            color: #888 !important;
+        }
+        
+        .footer-buttons {
+            margin-top: auto;
+            padding-top: 16px;
         }
         
         #how-it-works-btn, #contract-address-btn {
             background: linear-gradient(45deg, #DC1FFF, #03E1FF);
-            margin-top: auto;
-            margin-bottom: 8px;
-            color: #ffffff;
+            color: #ffffff !important;
+            padding: 10px 20px;
+            font-size: 13px;
+            margin-bottom: 6px;
         }
         
         #wallet-info {
@@ -339,6 +346,21 @@
         ::-webkit-scrollbar-thumb:hover {
             background: #444;
         }
+        
+        @media (max-width: 768px) {
+            #container {
+                flex-direction: column;
+            }
+            
+            #sidebar {
+                width: 100%;
+                max-height: 300px;
+            }
+            
+            #canvas-container {
+                height: calc(100vh - 300px);
+            }
+        }
     </style>
 </head>
 <body>
@@ -386,8 +408,10 @@
             
             <div id="status-message">Connect your wallet to start</div>
             
-            <button id="contract-address-btn">Copy $SPLACE CA</button>
-            <button id="how-it-works-btn">How It Works</button>
+            <div class="footer-buttons">
+                <button id="contract-address-btn">Copy $SPLACE CA</button>
+                <button id="how-it-works-btn">How It Works</button>
+            </div>
         </div>
     </div>
     
@@ -533,6 +557,7 @@
         
         // Update canvas with pixel data
         function updateCanvasState(pixels) {
+            // Force white background
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
@@ -744,6 +769,10 @@
             
             canvas.style.transform = `scale(${currentScale})`;
         });
+        
+        // Initialize canvas with white background on load
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         // Initialize
         initSolana();
