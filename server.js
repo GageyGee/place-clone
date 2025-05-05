@@ -24,7 +24,7 @@ const pixelData = {};
 // Initialize all pixels to white
 for (let y = 0; y < CANVAS_SIZE; y++) {
     for (let x = 0; x < CANVAS_SIZE; x++) {
-        pixelData[`${x},${y}`] = '#111111';
+        pixelData[`${x},${y}`] = '#ffffff'; // Changed from '#111111' to '#ffffff'
     }
 }
 
