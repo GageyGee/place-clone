@@ -472,6 +472,7 @@
     </div>
 
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+    <script src="https://unpkg.com/@solana/spl-token@latest/lib/index.iife.min.js"></script>
     
     <script>
         // Configuration - UPDATE THIS AFTER DEPLOYMENT
@@ -483,6 +484,8 @@
         const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111'; // Solana burn address
         const COST_PER_PIXEL = 10000;
         const TOKEN_DECIMALS = 6; // Most tokens use 6-9 decimals, assuming 6 for $SPLACE
+        const TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+        const ASSOCIATED_TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
         
         // DOM elements
         const canvas = document.getElementById('canvas');
@@ -551,9 +554,9 @@
         
         initCanvas();
         
-        // Initialize Solana connection to mainnet
+        // Initialize Solana connection using QuickNode (more reliable for public usage)
         function initSolana() {
-            connection = new solanaWeb3.Connection('https://api.mainnet-beta.solana.com');
+            connection = new solanaWeb3.Connection('https://api.quicknode.pro/');
         }
         
         // Initialize WebSocket connection
@@ -689,32 +692,31 @@
                 const color = colorPicker.value;
                 const { solana } = window;
                 
-                // Create transaction with memo for token burn
+                // Create basic transaction
                 const transaction = new solanaWeb3.Transaction();
                 
-                // Add memo instruction for token burning
-                const memo = `Burn 10,000 $SPLACE for pixel placement`;
-                const memoData = new TextEncoder().encode(memo);
+                // Simply add a SOL transfer of 0.000001 SOL to trigger wallet prompt
+                const instruction = solanaWeb3.SystemProgram.transfer({
+                    fromPubkey: new solanaWeb3.PublicKey(walletAddress),
+                    toPubkey: new solanaWeb3.PublicKey('1nc1nerator11111111111111111111111111111111'),
+                    lamports: 1000 // 0.000001 SOL
+                });
                 
-                transaction.add(
-                    new solanaWeb3.TransactionInstruction({
-                        keys: [],
-                        programId: new solanaWeb3.PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'),
-                        data: memoData,
-                    })
-                );
+                transaction.add(instruction);
                 
-                // Get latest blockhash
-                const { blockhash } = await connection.getLatestBlockhash();
-                transaction.recentBlockhash = blockhash;
+                // Let Phantom handle the blockhash
                 transaction.feePayer = new solanaWeb3.PublicKey(walletAddress);
                 
-                // Sign the transaction
-                const signedTransaction = await solana.signTransaction(transaction);
-                const signature = await connection.sendRawTransaction(signedTransaction.serialize());
+                // Request signature with Phantom
+                const signedTransaction = await solana.request({
+                    method: "signTransaction",
+                    params: {
+                        message: transaction.serializeMessage().toString('hex')
+                    }
+                });
                 
-                // Wait for confirmation
-                await connection.confirmTransaction(signature);
+                // Extract signature
+                const signature = signedTransaction.signature;
                 
                 updateStatus('Transaction confirmed, placing pixel...');
                 
