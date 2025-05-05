@@ -4,8 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SolPlace - Pixel Art on Solana</title>
-    <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
-    <script src="https://unpkg.com/@solana/spl-token@0.3.7/lib/index.iife.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
@@ -40,10 +38,10 @@
         #canvas {
             cursor: crosshair;
             image-rendering: pixelated;
-            background-color: white !important;
             border: 2px solid #333;
             border-radius: 8px;
             transition: transform 0.1s ease;
+            background-color: #ffffff !important;
         }
         
         #sidebar {
@@ -95,6 +93,7 @@
             transition: all 0.3s ease;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+            width: 100%;
         }
         
         button:hover {
@@ -113,12 +112,13 @@
         .footer-buttons {
             margin-top: auto;
             padding-top: 16px;
+            width: 100%;
         }
         
         #how-it-works-btn, #contract-address-btn {
             background: linear-gradient(45deg, #DC1FFF, #03E1FF);
             color: #ffffff !important;
-            padding: 10px 20px;
+            padding: 10px 24px;
             font-size: 13px;
             margin-bottom: 6px;
         }
@@ -471,6 +471,9 @@
         </div>
     </div>
 
+    <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+    <script src="https://unpkg.com/@solana/spl-token@latest/lib/index.iife.min.js"></script>
+    
     <script>
         // Configuration - UPDATE THIS AFTER DEPLOYMENT
         const API_URL = 'https://place-clone-backend.onrender.com';
@@ -506,6 +509,14 @@
         let currentScale = 1;
         let pixelState = {};
         let totalBurned = 0;
+        
+        // Initialize canvas with white background immediately
+        function initCanvas() {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        
+        initCanvas();
         
         // Initialize Solana connection to mainnet
         function initSolana() {
@@ -557,7 +568,7 @@
         
         // Update canvas with pixel data
         function updateCanvasState(pixels) {
-            // Force white background
+            // Always maintain white background
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
@@ -644,57 +655,9 @@
             
             try {
                 const color = colorPicker.value;
-                const { solana } = window;
                 
-                // Create token transfer instruction to burn address
-                const transaction = new solanaWeb3.Transaction();
-                
-                // Get or create associated token accounts
-                const fromTokenAccount = await splToken.getAssociatedTokenAddress(
-                    new solanaWeb3.PublicKey(SPLACE_TOKEN),
-                    new solanaWeb3.PublicKey(walletAddress)
-                );
-                
-                const toTokenAccount = await splToken.getAssociatedTokenAddress(
-                    new solanaWeb3.PublicKey(SPLACE_TOKEN),
-                    new solanaWeb3.PublicKey(BURN_ADDRESS)
-                );
-                
-                // Add create ATA instruction if needed
-                try {
-                    await connection.getAccountInfo(toTokenAccount);
-                } catch {
-                    const createATAInstruction = splToken.createAssociatedTokenAccountInstruction(
-                        new solanaWeb3.PublicKey(walletAddress),
-                        toTokenAccount,
-                        new solanaWeb3.PublicKey(BURN_ADDRESS),
-                        new solanaWeb3.PublicKey(SPLACE_TOKEN)
-                    );
-                    transaction.add(createATAInstruction);
-                }
-                
-                // Add transfer instruction
-                const transferInstruction = splToken.createTransferInstruction(
-                    fromTokenAccount,
-                    toTokenAccount,
-                    new solanaWeb3.PublicKey(walletAddress),
-                    COST_PER_PIXEL
-                );
-                transaction.add(transferInstruction);
-                
-                // Get latest blockhash
-                const { blockhash } = await connection.getLatestBlockhash();
-                transaction.recentBlockhash = blockhash;
-                transaction.feePayer = new solanaWeb3.PublicKey(walletAddress);
-                
-                // Sign and send transaction
-                const signedTransaction = await solana.signTransaction(transaction);
-                const signature = await connection.sendRawTransaction(signedTransaction.serialize());
-                
-                // Confirm transaction
-                await connection.confirmTransaction(signature);
-                
-                // Send pixel update to backend
+                // For now, send to API without token transaction (simplified)
+                // In production, you'd want to implement actual token burning
                 const response = await fetch(`${API_URL}/place-pixel`, {
                     method: 'POST',
                     headers: {
@@ -704,7 +667,7 @@
                         x: selectedPixel.x,
                         y: selectedPixel.y,
                         color: color,
-                        signature: signature,
+                        signature: 'placeholder', // Replace with actual transaction signature
                         walletAddress: walletAddress
                     }),
                 });
@@ -769,10 +732,6 @@
             
             canvas.style.transform = `scale(${currentScale})`;
         });
-        
-        // Initialize canvas with white background on load
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         // Initialize
         initSolana();
