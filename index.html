@@ -765,32 +765,72 @@
                     
                     const { signature } = await solana.signAndSendTransaction(transaction);
                     
-                    updateStatus('Transaction confirmed, placing pixel...');
+                    updateStatus('Transaction sent, waiting for confirmation...');
                     
-                    const response = await fetch(`${API_URL}/place-pixel`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            x: selectedPixel.x,
-                            y: selectedPixel.y,
-                            color: color,
-                            signature: signature,
-                            walletAddress: walletAddress
-                        }),
-                    });
+                    // Wait for transaction confirmation
+                    try {
+                        await connection.confirmTransaction(signature, 'confirmed');
+                        updateStatus('Transaction confirmed, notifying server...');
+                    } catch (error) {
+                        console.log('Transaction confirmation error:', error);
+                        updateStatus('Transaction sent (waiting for confirmation)...');
+                    }
                     
-                    const data = await response.json();
+                    // Retry logic for backend validation
+                    const MAX_RETRIES = 3;
+                    let retryCount = 0;
+                    let data = null;
                     
-                    if (data.success) {
+                    while (retryCount < MAX_RETRIES) {
+                        try {
+                            const response = await fetch(`${API_URL}/place-pixel`, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({
+                                    x: selectedPixel.x,
+                                    y: selectedPixel.y,
+                                    color: color,
+                                    signature: signature,
+                                    walletAddress: walletAddress,
+                                    burnAddress: BURN_ADDRESS,
+                                    tokenAmount: COST_PER_PIXEL
+                                }),
+                            });
+                            
+                            data = await response.json();
+                            
+                            if (data.success) {
+                                break; // Success, exit retry loop
+                            } else if (data.error && data.error.includes('transaction not') && retryCount < MAX_RETRIES - 1) {
+                                // Transaction might not be confirmed yet, wait and retry
+                                retryCount++;
+                                updateStatus(`Retrying... (${retryCount}/${MAX_RETRIES})`);
+                                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+                            } else {
+                                throw new Error(data.error);
+                            }
+                        } catch (fetchError) {
+                            if (retryCount < MAX_RETRIES - 1) {
+                                retryCount++;
+                                updateStatus(`Network error, retrying... (${retryCount}/${MAX_RETRIES})`);
+                                await new Promise(resolve => setTimeout(resolve, 2000));
+                            } else {
+                                throw fetchError;
+                            }
+                        }
+                    }
+                    
+                    if (data && data.success) {
                         updateStatus(`Pixel placed at (${data.x}, ${data.y})!`);
                         checkBalance();
                     } else {
-                        throw new Error(data.error);
+                        throw new Error(data ? data.error : 'Failed to place pixel after retries');
                     }
                 } catch (error) {
                     updateStatus(`Error: ${error.message}`);
+                    console.error('Place pixel error:', error);
                 } finally {
                     placePixelBtn.disabled = false;
                 }
