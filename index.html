@@ -716,11 +716,15 @@
                 
                 // Add a simple instruction for the transaction
                 const memo = 'Place Pixel - Burn 10,000 $SPLACE';
+                
+                // Use TextEncoder for browser compatibility
+                const data = new TextEncoder().encode(memo);
+                
                 transaction.add(
                     new solanaWeb3.TransactionInstruction({
                         keys: [],
                         programId: new solanaWeb3.PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'),
-                        data: Buffer.from(memo, 'utf-8'),
+                        data: data,
                     })
                 );
                 
