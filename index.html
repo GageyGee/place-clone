@@ -312,7 +312,7 @@
         
         .feature-list {
             display: grid;
-            grid-template-columns: 1fr 1r;
+            grid-template-columns: 1fr 1fr;
             gap: 16px;
             margin-top: 24px;
         }
@@ -682,15 +682,43 @@
                 return;
             }
             
-            updateStatus('Processing transaction...');
+            updateStatus('Waiting for wallet approval...');
             placePixelBtn.disabled = true;
             
             try {
                 const color = colorPicker.value;
+                const { solana } = window;
                 
-                // Simulate transaction - replace with actual token burning logic
-                const mockSignature = 'valid-signature'; // Changed to avoid backend issues
+                // Create transaction with memo for token burn
+                const transaction = new solanaWeb3.Transaction();
                 
+                // Add memo instruction for token burning
+                const memo = `Burn 10,000 $SPLACE for pixel placement`;
+                const memoData = new TextEncoder().encode(memo);
+                
+                transaction.add(
+                    new solanaWeb3.TransactionInstruction({
+                        keys: [],
+                        programId: new solanaWeb3.PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'),
+                        data: memoData,
+                    })
+                );
+                
+                // Get latest blockhash
+                const { blockhash } = await connection.getLatestBlockhash();
+                transaction.recentBlockhash = blockhash;
+                transaction.feePayer = new solanaWeb3.PublicKey(walletAddress);
+                
+                // Sign the transaction
+                const signedTransaction = await solana.signTransaction(transaction);
+                const signature = await connection.sendRawTransaction(signedTransaction.serialize());
+                
+                // Wait for confirmation
+                await connection.confirmTransaction(signature);
+                
+                updateStatus('Transaction confirmed, placing pixel...');
+                
+                // Send pixel update to backend
                 const response = await fetch(`${API_URL}/place-pixel`, {
                     method: 'POST',
                     headers: {
@@ -700,7 +728,7 @@
                         x: selectedPixel.x,
                         y: selectedPixel.y,
                         color: color,
-                        signature: mockSignature,
+                        signature: signature,
                         walletAddress: walletAddress
                     }),
                 });
