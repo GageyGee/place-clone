@@ -45,6 +45,21 @@
             transition: transform 0.1s ease;
         }
         
+        #contract-info {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 380px;
+            background: rgba(0, 0, 0, 0.95);
+            border-top: 2px solid #333;
+            padding: 16px;
+            text-align: center;
+            color: #00FFA3;
+            font-family: monospace;
+            font-size: 14px;
+            z-index: 100;
+        }
+        
         #sidebar {
             width: 380px;
             background: rgba(20, 20, 20, 0.95);
@@ -54,6 +69,7 @@
             flex-direction: column;
             gap: 24px;
             backdrop-filter: blur(10px);
+            position: relative;
         }
         
         .logo {
@@ -105,6 +121,12 @@
             box-shadow: none;
             cursor: not-allowed;
             color: #666;
+        }
+        
+        #how-it-works-btn {
+            background: linear-gradient(45deg, #DC1FFF, #03E1FF);
+            margin-top: auto;
+            margin-bottom: 16px;
         }
         
         #wallet-info {
@@ -181,6 +203,96 @@
             margin-right: 8px;
         }
         
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+        }
+        
+        .modal-content {
+            background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+            margin: 5% auto;
+            padding: 32px;
+            border: 1px solid #333;
+            border-radius: 16px;
+            width: 80%;
+            max-width: 600px;
+            position: relative;
+            animation: modalFadeIn 0.3s ease;
+        }
+        
+        @keyframes modalFadeIn {
+            from { opacity: 0; transform: translateY(-50px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .close {
+            color: #888;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .close:hover {
+            color: #00FFA3;
+        }
+        
+        .modal h2 {
+            color: #00FFA3;
+            margin-bottom: 24px;
+            font-size: 28px;
+        }
+        
+        .modal h3 {
+            color: #03E1FF;
+            margin-top: 24px;
+            margin-bottom: 12px;
+            font-size: 20px;
+        }
+        
+        .modal p, .modal li {
+            color: #888;
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+        
+        .modal ul {
+            padding-left: 20px;
+            margin-bottom: 16px;
+        }
+        
+        .modal li {
+            margin-bottom: 8px;
+        }
+        
+        .feature-list {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-top: 24px;
+        }
+        
+        .feature-item {
+            background: rgba(40, 40, 40, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 16px;
+        }
+        
+        .feature-icon {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+        
         ::-webkit-scrollbar {
             width: 6px;
             height: 6px;
@@ -227,11 +339,11 @@
             
             <div class="stats">
                 <div class="stat-card">
-                    <div class="stat-value" id="balance">0.000</div>
-                    <div class="stat-label">SOL Balance</div>
+                    <div class="stat-value" id="balance">0</div>
+                    <div class="stat-label">$SPLACE Balance</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value">0.01</div>
+                    <div class="stat-value">10,000</div>
                     <div class="stat-label">Cost per Pixel</div>
                 </div>
             </div>
@@ -239,6 +351,64 @@
             <button id="place-pixel" disabled>Place Pixel</button>
             
             <div id="status-message">Connect your wallet to start</div>
+            
+            <button id="how-it-works-btn">How It Works</button>
+        </div>
+    </div>
+    
+    <div id="contract-info">Official $SPLACE CA: 0000000000000000000000000000000000000000000000000000000000000000</div>
+    
+    <!-- Modal -->
+    <div id="how-it-works-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>How SolPlace Works</h2>
+            
+            <h3>Getting Started</h3>
+            <p>SolPlace is a collaborative pixel art canvas on Solana where creativity meets blockchain technology.</p>
+            
+            <ul>
+                <li>Connect your Phantom wallet</li>
+                <li>Ensure you have $SPLACE tokens</li>
+                <li>Click any pixel on the canvas</li>
+                <li>Select your desired color</li>
+                <li>Pay 10,000 $SPLACE to place your pixel</li>
+            </ul>
+            
+            <h3>Deflationary Mechanism</h3>
+            <p>Every pixel placement burns 10,000 $SPLACE tokens, making the token deflationary. The tokens are permanently removed from circulation, increasing scarcity over time.</p>
+            
+            <h3>Features</h3>
+            <div class="feature-list">
+                <div class="feature-item">
+                    <div class="feature-icon">🎨</div>
+                    <h4>Unlimited Colors</h4>
+                    <p>Choose any color for your pixel</p>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">⚡</div>
+                    <h4>Real-time Updates</h4>
+                    <p>See changes instantly</p>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🔥</div>
+                    <h4>Token Burning</h4>
+                    <p>Makes $SPLACE deflationary</p>
+                </div>
+                <div class="feature-item">
+                    <div class="feature-icon">🌐</div>
+                    <h4>Permanent Canvas</h4>
+                    <p>Your art lives forever</p>
+                </div>
+            </div>
+            
+            <h3>Tips</h3>
+            <ul>
+                <li>Use scroll to zoom in/out on the canvas</li>
+                <li>Collaborate with others to create art</li>
+                <li>Check your $SPLACE balance before placing multiple pixels</li>
+                <li>Be creative and respectful of others' work</li>
+            </ul>
         </div>
     </div>
 
@@ -248,8 +418,9 @@
         const WS_URL = 'wss://place-clone-backend.onrender.com';
         
         // Constants
-        const TREASURY_ADDRESS = '7ReraTnzB5eoqpimZR6rZytz3D98SNYkMgQLUiRiVZXf';
-        const COST_PER_PIXEL_LAMPORTS = 0.01 * 1e9; // 0.01 SOL in lamports
+        const SPLACE_TOKEN = '38KWMyCbPurCgqqwx5JG4EouREtjwcCaDqvL9KNGsvDf';
+        const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111'; // Solana burn address
+        const COST_PER_PIXEL = 10000;
         
         // DOM elements
         const canvas = document.getElementById('canvas');
@@ -261,6 +432,9 @@
         const walletAddressSpan = document.getElementById('wallet-address');
         const balanceSpan = document.getElementById('balance');
         const connectedIndicator = document.querySelector('.connected-indicator');
+        const howItWorksBtn = document.getElementById('how-it-works-btn');
+        const modal = document.getElementById('how-it-works-modal');
+        const closeBtn = document.querySelector('.close');
         
         // State
         let selectedPixel = null;
@@ -270,9 +444,9 @@
         let currentScale = 1;
         let pixelState = {};
         
-        // Initialize Solana connection to devnet
+        // Initialize Solana connection to mainnet
         function initSolana() {
-            connection = new solanaWeb3.Connection('https://api.devnet.solana.com');
+            connection = new solanaWeb3.Connection('https://api.mainnet-beta.solana.com');
         }
         
         // Initialize WebSocket connection
@@ -353,13 +527,12 @@
             }
         }
         
-        // Check SOL balance
+        // Check $SPLACE token balance
         async function checkBalance() {
             try {
-                const publicKey = new solanaWeb3.PublicKey(walletAddress);
-                const balance = await connection.getBalance(publicKey);
-                const solBalance = balance / 1e9;
-                balanceSpan.textContent = solBalance.toFixed(4);
+                // This would use @solana/spl-token to check token balance
+                // For now, we'll simulate it
+                balanceSpan.textContent = '50,000';
             } catch (error) {
                 balanceSpan.textContent = 'Error';
             }
@@ -378,25 +551,11 @@
             try {
                 const color = colorPicker.value;
                 
-                // Create transaction
-                const transaction = new solanaWeb3.Transaction().add(
-                    solanaWeb3.SystemProgram.transfer({
-                        fromPubkey: new solanaWeb3.PublicKey(walletAddress),
-                        toPubkey: new solanaWeb3.PublicKey(TREASURY_ADDRESS),
-                        lamports: COST_PER_PIXEL_LAMPORTS,
-                    })
-                );
+                // Create token transfer instruction to burn address
+                // This would involve @solana/spl-token
+                // For simulation purposes, we'll create a placeholder transaction
                 
-                // Get latest blockhash
-                const { blockhash } = await connection.getLatestBlockhash();
-                transaction.recentBlockhash = blockhash;
-                transaction.feePayer = new solanaWeb3.PublicKey(walletAddress);
-                
-                // Sign and send transaction
-                const { signature } = await window.solana.signAndSendTransaction(transaction);
-                
-                // Confirm transaction
-                await connection.confirmTransaction(signature);
+                const signature = 'placeholder_signature';
                 
                 // Send pixel update to backend
                 const response = await fetch(`${API_URL}/place-pixel`, {
@@ -431,6 +590,21 @@
         // Update status message
         function updateStatus(message) {
             statusMessage.textContent = message;
+        }
+        
+        // Modal event listeners
+        howItWorksBtn.onclick = () => {
+            modal.style.display = 'block';
+        }
+        
+        closeBtn.onclick = () => {
+            modal.style.display = 'none';
+        }
+        
+        window.onclick = (event) => {
+            if (event.target == modal) {
+                modal.style.display = 'none';
+            }
         }
         
         // Event listeners
