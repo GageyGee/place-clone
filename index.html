@@ -486,10 +486,15 @@
             const COST_PER_PIXEL = 10000;
             const TOKEN_DECIMALS = 6;
             
+            // Program IDs
+            const TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+            const ASSOCIATED_TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+            
             // RPC Configuration - UPDATE WITH YOUR QUICKNODE ENDPOINT
             const RPC_ENDPOINTS = [
                 'https://radial-chaotic-pool.solana-mainnet.quiknode.pro/192e8e76f0a288f5a32ace0b676f7f34778f219f/', // Replace with your QuickNode HTTP endpoint
-                'https://api.metaplex.solana.com' // Backup RPC
+                'https://api.metaplex.solana.com', // Backup RPC
+                'https://api.mainnet-beta.solana.com' // Another backup
             ];
             
             // DOM elements
@@ -557,6 +562,19 @@
             }
             
             initCanvas();
+            
+            // Function to manually calculate associated token address
+            async function getAssociatedTokenAddress(mint, owner) {
+                const [address] = await solanaWeb3.PublicKey.findProgramAddress(
+                    [
+                        owner.toBuffer(),
+                        TOKEN_PROGRAM_ID.toBuffer(),
+                        mint.toBuffer(),
+                    ],
+                    ASSOCIATED_TOKEN_PROGRAM_ID
+                );
+                return address;
+            }
             
             // Initialize Solana connection with retry logic
             async function initSolana() {
@@ -703,8 +721,27 @@
                         { pubkey: toTokenAccount, isSigner: false, isWritable: true },
                         { pubkey: owner, isSigner: true, isWritable: false },
                     ],
-                    programId: solanaWeb3.TOKEN_PROGRAM_ID,
+                    programId: TOKEN_PROGRAM_ID,
                     data
+                });
+            }
+            
+            // Create associated token account instruction manually
+            function createAssociatedTokenAccountInstruction(payer, associatedToken, owner, mint) {
+                const keys = [
+                    { pubkey: payer, isSigner: true, isWritable: true },
+                    { pubkey: associatedToken, isSigner: false, isWritable: true },
+                    { pubkey: owner, isSigner: false, isWritable: false },
+                    { pubkey: mint, isSigner: false, isWritable: false },
+                    { pubkey: solanaWeb3.SystemProgram.programId, isSigner: false, isWritable: false },
+                    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+                    { pubkey: solanaWeb3.SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
+                ];
+                
+                return new solanaWeb3.TransactionInstruction({
+                    keys,
+                    programId: ASSOCIATED_TOKEN_PROGRAM_ID,
+                    data: Buffer.alloc(0)
                 });
             }
             
@@ -731,21 +768,8 @@
                     const burnPubkey = new solanaWeb3.PublicKey(BURN_ADDRESS);
                     
                     // Get associated token accounts
-                    const ownerTokenAccount = await solanaWeb3.getAssociatedTokenAddress(
-                        mintPubkey,
-                        ownerPubkey,
-                        false,
-                        solanaWeb3.TOKEN_PROGRAM_ID,
-                        solanaWeb3.ASSOCIATED_TOKEN_PROGRAM_ID
-                    );
-                    
-                    const burnTokenAccount = await solanaWeb3.getAssociatedTokenAddress(
-                        mintPubkey,
-                        burnPubkey,
-                        false,
-                        solanaWeb3.TOKEN_PROGRAM_ID,
-                        solanaWeb3.ASSOCIATED_TOKEN_PROGRAM_ID
-                    );
+                    const ownerTokenAccount = await getAssociatedTokenAddress(mintPubkey, ownerPubkey);
+                    const burnTokenAccount = await getAssociatedTokenAddress(mintPubkey, burnPubkey);
                     
                     // Create transaction
                     const transaction = new solanaWeb3.Transaction();
@@ -755,13 +779,11 @@
                         const burnAccountInfo = await connection.getAccountInfo(burnTokenAccount);
                         if (!burnAccountInfo) {
                             // Create associated token account for burn address
-                            const createAccountInstruction = solanaWeb3.createAssociatedTokenAccountInstruction(
+                            const createAccountInstruction = createAssociatedTokenAccountInstruction(
                                 ownerPubkey,
                                 burnTokenAccount,
                                 burnPubkey,
-                                mintPubkey,
-                                solanaWeb3.TOKEN_PROGRAM_ID,
-                                solanaWeb3.ASSOCIATED_TOKEN_PROGRAM_ID
+                                mintPubkey
                             );
                             transaction.add(createAccountInstruction);
                         }
