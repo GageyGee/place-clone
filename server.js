@@ -12,7 +12,7 @@ app.use(cors());
 app.use(express.json());
 
 // Constants
-const TREASURY_ADDRESS = 'YOUR_TREASURY_WALLET_ADDRESS'; // Replace with your devnet wallet
+const TREASURY_ADDRESS = '7ReraTnzB5eoqpimZR6rZytz3D98SNYkMgQLUiRiVZXf'; // Replace with your devnet wallet
 const COST_PER_PIXEL_LAMPORTS = 0.01 * 1e9; // 0.01 SOL
 const CANVAS_SIZE = 100; // 100x100 pixel grid
 
