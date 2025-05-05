@@ -472,8 +472,14 @@
     </div>
 
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/buffer/6.0.3/buffer.min.js"></script>
     
     <script>
+        // Make Buffer available globally
+        if (typeof window.Buffer === 'undefined') {
+            window.Buffer = buffer.Buffer;
+        }
+        
         // Wait for all scripts to load before starting
         window.addEventListener('load', () => {
             // Configuration - UPDATE THIS AFTER DEPLOYMENT
@@ -490,9 +496,9 @@
             const TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
             const ASSOCIATED_TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
             
-            // RPC Configuration - UPDATE WITH YOUR QUICKNODE ENDPOINT
+            // RPC Configuration - Using your QuickNode endpoint
             const RPC_ENDPOINTS = [
-                'https://radial-chaotic-pool.solana-mainnet.quiknode.pro/192e8e76f0a288f5a32ace0b676f7f34778f219f/', // Replace with your QuickNode HTTP endpoint
+                'https://radial-chaotic-pool.solana-mainnet.quiknode.pro/192e8e76f0a288f5a32ace0b676f7f34778f219f/',
                 'https://api.metaplex.solana.com', // Backup RPC
                 'https://api.mainnet-beta.solana.com' // Another backup
             ];
