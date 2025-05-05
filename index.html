@@ -485,6 +485,9 @@
         const COST_PER_PIXEL = 10000;
         const TOKEN_DECIMALS = 6; // Most tokens use 6-9 decimals, assuming 6 for $SPLACE
         
+        // Access SPL Token functions directly from the global splToken object
+        const { getAccount, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, createTransferInstruction, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } = window.splToken;
+        
         // DOM elements
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
@@ -699,46 +702,46 @@
                 const burnPubkey = new solanaWeb3.PublicKey(BURN_ADDRESS);
                 
                 // Get associated token addresses
-                const ownerTokenAccount = await splToken.getAssociatedTokenAddress(
+                const ownerTokenAccount = await getAssociatedTokenAddress(
                     mintPubkey,
                     ownerPubkey,
                     false,
-                    splToken.TOKEN_PROGRAM_ID,
-                    splToken.ASSOCIATED_TOKEN_PROGRAM_ID
+                    TOKEN_PROGRAM_ID,
+                    ASSOCIATED_TOKEN_PROGRAM_ID
                 );
                 
-                const burnTokenAccount = await splToken.getAssociatedTokenAddress(
+                const burnTokenAccount = await getAssociatedTokenAddress(
                     mintPubkey,
                     burnPubkey,
                     false,
-                    splToken.TOKEN_PROGRAM_ID,
-                    splToken.ASSOCIATED_TOKEN_PROGRAM_ID
+                    TOKEN_PROGRAM_ID,
+                    ASSOCIATED_TOKEN_PROGRAM_ID
                 );
                 
                 // Create the burn token account if it doesn't exist
                 try {
-                    await splToken.getAccount(connection, burnTokenAccount);
+                    await getAccount(connection, burnTokenAccount);
                 } catch (error) {
-                    const createBurnAccountInstruction = splToken.createAssociatedTokenAccountInstruction(
+                    const createBurnAccountInstruction = createAssociatedTokenAccountInstruction(
                         ownerPubkey,
                         burnTokenAccount,
                         burnPubkey,
                         mintPubkey,
-                        splToken.TOKEN_PROGRAM_ID,
-                        splToken.ASSOCIATED_TOKEN_PROGRAM_ID
+                        TOKEN_PROGRAM_ID,
+                        ASSOCIATED_TOKEN_PROGRAM_ID
                     );
                     transaction.add(createBurnAccountInstruction);
                 }
                 
                 // Add token transfer instruction
                 const amount = BigInt(COST_PER_PIXEL * Math.pow(10, TOKEN_DECIMALS));
-                const transferInstruction = splToken.createTransferInstruction(
+                const transferInstruction = createTransferInstruction(
                     ownerTokenAccount,
                     burnTokenAccount,
                     ownerPubkey,
                     amount,
                     [],
-                    splToken.TOKEN_PROGRAM_ID
+                    TOKEN_PROGRAM_ID
                 );
                 
                 transaction.add(transferInstruction);
