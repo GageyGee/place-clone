@@ -534,40 +534,35 @@
                 }
             }
             
-            const STATE_SERVER_URL = 'https://api.jsonbin.io/v3/b/6465ac4f9d312622a3626bb1';
-            const STATE_SERVER_KEY = '$2b$10$aCUXadwOQfRmO7AW2Jmxk.K6t/bNk9BsZs/IEhcn.dSKsoXwg7MGC';
-
-            // Initialize WebSocket with focus on real-time updates
+            // Simple WebSocket initialization
             function initWebSocket() {
                 if (ws) {
                     try { ws.close(); } catch (e) {}
                 }
                 
-                console.log('Connecting to WebSocket server:', WS_URL);
+                console.log('Connecting to WebSocket server...');
                 ws = new WebSocket(WS_URL);
                 
-                ws.onopen = async () => {
+                ws.onopen = () => {
                     console.log('WebSocket connected');
                     updateStatus('Connected to server');
                     
-                    // Load canvas state from persistent storage first
-                    await fetchCanvasState();
-                    
-                    // Then listen for real-time updates
+                    // Request the full canvas state on connection
                     ws.send(JSON.stringify({
-                        type: 'subscribe',
-                        channel: 'pixel_updates',
-                        client_id: walletAddress || 'anonymous_' + Math.random().toString(36).substring(2, 10)
+                        type: 'get_canvas_state'
                     }));
                 };
                 
                 ws.onmessage = (event) => {
                     try {
                         const data = JSON.parse(event.data);
-                        console.log('WebSocket message:', data.type);
+                        console.log('WebSocket message received:', data.type);
                         
-                        if (data.type === 'pixel_update') {
-                            // Real-time update from another user
+                        if (data.type === 'canvas_state') {
+                            console.log('Received canvas state with', Object.keys(data.pixels || {}).length, 'pixels');
+                            pixelState = data.pixels || {};
+                            updateCanvasState(pixelState);
+                        } else if (data.type === 'pixel_update' || data.type === 'manual_pixel_update') {
                             console.log('Received pixel update:', data.x, data.y, data.color);
                             pixelState[`${data.x},${data.y}`] = data.color;
                             updatePixel(data.x, data.y, data.color);
@@ -588,100 +583,13 @@
                 ws.onclose = () => {
                     console.log('WebSocket disconnected');
                     updateStatus('Disconnected. Reconnecting...');
-                    setTimeout(initWebSocket, 3000);
+                    setTimeout(initWebSocket, 2000);
                 };
                 
                 ws.onerror = (error) => {
                     console.error('WebSocket error:', error);
                     updateStatus('Connection error. Reconnecting...');
                 };
-            }
-            
-            // Fetch canvas state from persistent storage API
-            async function fetchCanvasState() {
-                try {
-                    console.log('Fetching canvas state from persistent storage...');
-                    updateStatus('Loading canvas data...');
-                    
-                    const response = await fetch(STATE_SERVER_URL, {
-                        method: 'GET',
-                        headers: {
-                            'X-Master-Key': STATE_SERVER_KEY,
-                            'X-Bin-Meta': 'false'
-                        }
-                    });
-                    
-                    if (!response.ok) {
-                        throw new Error(`Failed to fetch canvas state: ${response.status}`);
-                    }
-                    
-                    const data = await response.json();
-                    console.log('Canvas state retrieved:', Object.keys(data.pixels || {}).length, 'pixels');
-                    
-                    pixelState = data.pixels || {};
-                    totalBurned = data.totalBurned || 0;
-                    
-                    updateCanvasState(pixelState);
-                    updateBurnedDisplay();
-                    
-                    updateStatus('Canvas loaded successfully');
-                } catch (error) {
-                    console.error('Error fetching canvas state:', error);
-                    updateStatus('Error loading canvas. Using cached data.');
-                    
-                    // Try to load from local backup
-                    const localState = localStorage.getItem('solplace_state');
-                    if (localState) {
-                        try {
-                            const parsedState = JSON.parse(localState);
-                            pixelState = parsedState.pixels || {};
-                            totalBurned = parsedState.totalBurned || 0;
-                            
-                            updateCanvasState(pixelState);
-                            updateBurnedDisplay();
-                            
-                            console.log('Loaded canvas from local backup:', Object.keys(pixelState).length, 'pixels');
-                        } catch (localError) {
-                            console.error('Error loading local backup:', localError);
-                        }
-                    }
-                }
-            }
-            
-            // Save canvas state to persistent storage
-            async function saveCanvasState() {
-                try {
-                    console.log('Saving canvas state to persistent storage...');
-                    
-                    const state = {
-                        pixels: pixelState,
-                        totalBurned: totalBurned,
-                        lastUpdated: Date.now()
-                    };
-                    
-                    // Save locally first as backup
-                    localStorage.setItem('solplace_state', JSON.stringify(state));
-                    
-                    // Then save to server
-                    const response = await fetch(STATE_SERVER_URL, {
-                        method: 'PUT',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-Master-Key': STATE_SERVER_KEY
-                        },
-                        body: JSON.stringify(state)
-                    });
-                    
-                    if (!response.ok) {
-                        throw new Error(`Failed to save canvas state: ${response.status}`);
-                    }
-                    
-                    console.log('Canvas state saved successfully');
-                    return true;
-                } catch (error) {
-                    console.error('Error saving canvas state:', error);
-                    return false;
-                }
             }
             
             // Initialize canvas
@@ -898,8 +806,9 @@
                         console.log('Confirmation result:', confirmResult);
                         updateStatus('Transaction confirmed! Placing pixel...');
                         
-                        // Create pixel data object
+                        // Create simple pixel data object
                         const pixelData = {
+                            type: 'pixel_update',  // Use same message type for consistency
                             x: selectedPixel.x,
                             y: selectedPixel.y,
                             color: color,
@@ -908,51 +817,21 @@
                             timestamp: Date.now()
                         };
                         
-                        // Update local state first
+                        // Update local state first for immediate feedback
                         pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
                         updatePixel(selectedPixel.x, selectedPixel.y, color);
                         
-                        // 1. Broadcast through WebSocket for real-time updates
+                        // Then broadcast to all connected clients
                         if (ws && ws.readyState === WebSocket.OPEN) {
                             console.log('Broadcasting pixel update to all users');
-                            ws.send(JSON.stringify({
-                                type: 'pixel_update',
-                                ...pixelData
-                            }));
-                        }
-                        
-                        // 2. Save to persistent storage
-                        const saved = await saveCanvasState();
-                        if (saved) {
-                            console.log('Canvas state saved successfully');
+                            ws.send(JSON.stringify(pixelData));
+                            updateStatus('Pixel placed successfully!');
                         } else {
-                            console.warn('Failed to save canvas state');
+                            console.warn('WebSocket not connected, cannot broadcast update');
+                            updateStatus('Pixel placed locally. Refresh to see updates from others.');
                         }
                         
-                        // 3. Alternative API endpoint as backup
-                        try {
-                            const response = await fetch(`${API_URL}/place-pixel`, {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                },
-                                body: JSON.stringify({
-                                    ...pixelData,
-                                    burnAddress: BURN_ADDRESS,
-                                    tokenMint: SPLACE_TOKEN,
-                                    tokenAmount: amount.toString()
-                                })
-                            });
-                            
-                            const data = await response.json();
-                            if (data.success) {
-                                console.log('Pixel registered with server');
-                            }
-                        } catch (apiError) {
-                            console.error('API error:', apiError);
-                        }
-                        
-                        updateStatus('Pixel placed successfully!');
+                        // Update burned total
                         totalBurned += COST_PER_PIXEL;
                         updateBurnedDisplay();
                         checkBalance();
@@ -967,6 +846,21 @@
                     placePixelBtn.disabled = false;
                 }
             }
+            
+            // Initialize on page load
+            function initApp() {
+                initConnection().then(() => {
+                    initCanvas();
+                    initWebSocket();
+                    updateStatus('Connect your wallet to start');
+                }).catch(error => {
+                    updateStatus('Failed to connect to RPC. Please check your configuration.');
+                    console.error('RPC connection error:', error);
+                });
+            }
+            
+            // Start the app
+            initApp();
             
             // Event listeners
             connectWalletBtn.onclick = connectWallet;
