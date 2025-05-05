@@ -538,17 +538,41 @@
             function initWebSocket() {
                 ws = new WebSocket(WS_URL);
                 
-                ws.onopen = () => updateStatus('Connected to server');
+                ws.onopen = () => {
+                    updateStatus('Connected to server');
+                    // Request initial canvas state when connected
+                    ws.send(JSON.stringify({type: 'get_canvas_state'}));
+                    // Request total burned tokens
+                    ws.send(JSON.stringify({type: 'get_burned_total'}));
+                };
                 
                 ws.onmessage = (event) => {
                     const data = JSON.parse(event.data);
+                    console.log('WebSocket message received:', data.type);
                     
                     if (data.type === 'canvas_state') {
+                        console.log('Received canvas state with', Object.keys(data.pixels || {}).length, 'pixels');
                         pixelState = data.pixels || {};
                         updateCanvasState(pixelState);
                     } else if (data.type === 'pixel_update') {
+                        console.log('Pixel update received:', data.x, data.y, data.color);
                         pixelState[`${data.x},${data.y}`] = data.color;
                         updatePixel(data.x, data.y, data.color);
+                        
+                        // Update burned total
+                        totalBurned += COST_PER_PIXEL;
+                        updateBurnedDisplay();
+                    } else if (data.type === 'burned_total') {
+                        console.log('Burned total received:', data.total);
+                        totalBurned = parseInt(data.total) || 0;
+                        updateBurnedDisplay();
+                    } else if (data.type === 'manual_pixel_update') {
+                        // Handle manual pixel updates sent by other clients
+                        console.log('Manual pixel update received:', data.x, data.y, data.color);
+                        pixelState[`${data.x},${data.y}`] = data.color;
+                        updatePixel(data.x, data.y, data.color);
+                        
+                        // Update burned total
                         totalBurned += COST_PER_PIXEL;
                         updateBurnedDisplay();
                     }
@@ -557,6 +581,10 @@
                 ws.onclose = () => {
                     updateStatus('Disconnected from server');
                     setTimeout(initWebSocket, 5000);
+                };
+                
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
                 };
             }
             
@@ -799,15 +827,11 @@
                                 updateStatus(`Pixel placed at (${data.x}, ${data.y})!`);
                                 checkBalance();
                             } else {
-                                // If server approach fails, use direct approach
+                                // If server approach fails, broadcast via WebSocket
                                 console.log('Server approach failed:', data.error);
-                                updateStatus('Server verification failed, using direct update...');
+                                updateStatus('Server verification failed, broadcasting update...');
                                 
-                                // Direct approach - update the pixel locally since we know the transaction succeeded
-                                updatePixel(selectedPixel.x, selectedPixel.y, color);
-                                pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
-                                
-                                // Also try direct WebSocket message to update all connected clients
+                                // Broadcast the pixel update via WebSocket for real-time updates
                                 if (ws && ws.readyState === WebSocket.OPEN) {
                                     ws.send(JSON.stringify({
                                         type: 'manual_pixel_update',
@@ -819,17 +843,16 @@
                                     }));
                                 }
                                 
+                                // Also update locally
+                                updatePixel(selectedPixel.x, selectedPixel.y, color);
+                                pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
+                                
                                 updateStatus('Pixel placed successfully (direct update)!');
-                                totalBurned += COST_PER_PIXEL;
-                                updateBurnedDisplay();
                                 checkBalance();
                             }
                         } catch (serverError) {
                             console.error('Server error:', serverError);
-                            // If there's any error with the server, use direct approach
-                            updatePixel(selectedPixel.x, selectedPixel.y, color);
-                            pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
-                            
+                            // If there's any error with the server, broadcast via WebSocket
                             if (ws && ws.readyState === WebSocket.OPEN) {
                                 ws.send(JSON.stringify({
                                     type: 'manual_pixel_update',
@@ -841,9 +864,11 @@
                                 }));
                             }
                             
+                            // Also update locally
+                            updatePixel(selectedPixel.x, selectedPixel.y, color);
+                            pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
+                            
                             updateStatus('Pixel placed successfully (direct update)!');
-                            totalBurned += COST_PER_PIXEL;
-                            updateBurnedDisplay();
                             checkBalance();
                         }
                     } catch (confirmError) {
