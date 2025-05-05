@@ -2,10 +2,9 @@ const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
 const { Connection, clusterApiUrl, PublicKey } = require('@solana/web3.js');
 const { getAccount, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
+const { MongoClient } = require('mongodb');
 
 const app = express();
 const server = http.createServer(app);
@@ -21,68 +20,97 @@ const COST_PER_PIXEL = 10000;
 const TOKEN_DECIMALS = 6;
 const CANVAS_SIZE = 100; // 100x100 pixel grid
 
-// Path for persistent storage
-const DATA_FILE = path.join(__dirname, 'pixel_data.json');
-const BACKUP_FILE = path.join(__dirname, 'pixel_data_backup.json');
+// MongoDB connection string - Replace with your MongoDB connection string
+// For example: mongodb+srv://username:password@cluster.mongodb.net/solplace
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/solplace';
+let db;
+let pixelCollection;
+let statsCollection;
 
-// Initialize in-memory pixel storage
-let pixelData = {};
+// In-memory cache for pixels and total burned
+let pixelState = {};
 let totalBurned = 0;
 
-// Load pixel data from file if it exists
-function loadPixelData() {
+// Initialize MongoDB connection
+async function connectToDatabase() {
     try {
-        if (fs.existsSync(DATA_FILE)) {
-            const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-            pixelData = data.pixels || {};
-            totalBurned = data.totalBurned || 0;
-            console.log(`Loaded ${Object.keys(pixelData).length} pixels from storage`);
-            console.log(`Loaded total burned: ${totalBurned}`);
-            
-            // Fill in any missing pixels with white
-            for (let y = 0; y < CANVAS_SIZE; y++) {
-                for (let x = 0; x < CANVAS_SIZE; x++) {
-                    const key = `${x},${y}`;
-                    if (!pixelData[key]) {
-                        pixelData[key] = {
-                            color: '#ffffff',
-                            wallet: null,
-                            timestamp: Date.now()
-                        };
-                    }
+        const client = new MongoClient(MONGODB_URI);
+        await client.connect();
+        console.log('Connected to MongoDB');
+        
+        db = client.db();
+        pixelCollection = db.collection('pixels');
+        statsCollection = db.collection('stats');
+        
+        // Load initial data
+        await loadPixelData();
+    } catch (error) {
+        console.error('MongoDB connection error:', error);
+        console.log('Starting with empty canvas as fallback');
+        initializeEmptyCanvas();
+    }
+}
+
+// Load pixel data from MongoDB
+async function loadPixelData() {
+    try {
+        // Load all pixels
+        const pixels = await pixelCollection.find({}).toArray();
+        
+        console.log(`Loaded ${pixels.length} pixels from database`);
+        
+        // Convert array to object with coordinates as keys
+        pixelState = {};
+        for (const pixel of pixels) {
+            const key = `${pixel.x},${pixel.y}`;
+            pixelState[key] = {
+                color: pixel.color,
+                wallet: pixel.wallet,
+                timestamp: pixel.timestamp
+            };
+        }
+        
+        // Fill in any missing pixels with white
+        for (let y = 0; y < CANVAS_SIZE; y++) {
+            for (let x = 0; x < CANVAS_SIZE; x++) {
+                const key = `${x},${y}`;
+                if (!pixelState[key]) {
+                    pixelState[key] = {
+                        color: '#ffffff',
+                        wallet: null,
+                        timestamp: Date.now()
+                    };
                 }
             }
+        }
+        
+        // Load total burned tokens
+        const stats = await statsCollection.findOne({ type: 'global' });
+        if (stats) {
+            totalBurned = stats.totalBurned || 0;
+            console.log(`Loaded total burned: ${totalBurned}`);
         } else {
-            console.log('No pixel data file found, initializing with default values');
-            initializeEmptyCanvas();
+            // Initialize stats if not exist
+            await statsCollection.insertOne({
+                type: 'global',
+                totalBurned: 0,
+                lastUpdate: Date.now()
+            });
         }
     } catch (error) {
-        console.error('Error loading pixel data:', error);
-        console.log('Initializing with default values');
+        console.error('Error loading pixel data from database:', error);
         initializeEmptyCanvas();
-        
-        // Try to load from backup
-        try {
-            if (fs.existsSync(BACKUP_FILE)) {
-                const backupData = JSON.parse(fs.readFileSync(BACKUP_FILE, 'utf8'));
-                pixelData = backupData.pixels || {};
-                totalBurned = backupData.totalBurned || 0;
-                console.log(`Restored ${Object.keys(pixelData).length} pixels from backup`);
-            }
-        } catch (backupError) {
-            console.error('Error loading backup data:', backupError);
-        }
     }
 }
 
 // Initialize empty canvas with white pixels
 function initializeEmptyCanvas() {
-    pixelData = {};
+    pixelState = {};
     totalBurned = 0;
     
     for (let y = 0; y < CANVAS_SIZE; y++) {
         for (let x = 0; x < CANVAS_SIZE; x++) {
-            pixelData[`${x},${y}`] = {
+            pixelState[`${x},${y}`] = {
                 color: '#ffffff',
                 wallet: null,
                 timestamp: Date.now()
@@ -91,37 +119,57 @@ function initializeEmptyCanvas() {
     }
 }
 
-// Save pixel data to file
-function savePixelData() {
+// Save pixel data to MongoDB
+async function savePixel(x, y, color, wallet, timestamp) {
     try {
-        // Create a backup of the current file if it exists
-        if (fs.existsSync(DATA_FILE)) {
-            fs.copyFileSync(DATA_FILE, BACKUP_FILE);
-        }
+        const key = `${x},${y}`;
         
-        // Save the current state
-        fs.writeFileSync(DATA_FILE, JSON.stringify({
-            pixels: pixelData,
-            totalBurned: totalBurned,
-            lastUpdate: Date.now()
-        }, null, 2));
+        // Update or insert the pixel in MongoDB
+        await pixelCollection.updateOne(
+            { x, y },
+            {
+                $set: {
+                    x,
+                    y,
+                    color,
+                    wallet,
+                    timestamp
+                }
+            },
+            { upsert: true }
+        );
         
-        console.log('Pixel data saved to file');
+        console.log(`Saved pixel at (${x},${y}) to database`);
+        return true;
     } catch (error) {
-        console.error('Error saving pixel data:', error);
+        console.error('Error saving pixel to database:', error);
+        return false;
     }
 }
 
-// Set up auto-save every 5 minutes
-const SAVE_INTERVAL = 5 * 60 * 1000; // 5 minutes
-setInterval(savePixelData, SAVE_INTERVAL);
+// Update the total burned tokens in database
+async function updateTotalBurned(amount) {
+    try {
+        await statsCollection.updateOne(
+            { type: 'global' },
+            {
+                $inc: { totalBurned: amount },
+                $set: { lastUpdate: Date.now() }
+            },
+            { upsert: true }
+        );
+        
+        console.log(`Updated total burned: +${amount}, new total: ${totalBurned}`);
+        return true;
+    } catch (error) {
+        console.error('Error updating total burned:', error);
+        return false;
+    }
+}
 
 // Initialize Solana connection to mainnet
 const connection = new Connection(clusterApiUrl('mainnet-beta'));
 console.log('Connected to Solana mainnet');
-
-// Load pixel data on startup
-loadPixelData();
 
 // WebSocket broadcast function
 function broadcast(data) {
@@ -138,7 +186,7 @@ function broadcast(data) {
 app.get('/canvas', (req, res) => {
     console.log('Canvas state requested');
     res.json({
-        pixels: pixelData,
+        pixels: pixelState,
         totalBurned: totalBurned
     });
 });
@@ -190,7 +238,7 @@ async function verifyTransaction(signature, expectedAmount) {
             return false;
         }
         
-        console.log('Transaction found, details:', transaction);
+        console.log('Transaction found');
         
         // Verify this transaction includes a token transfer to the burn address
         if (transaction.meta && transaction.meta.preTokenBalances && transaction.meta.postTokenBalances) {
@@ -204,7 +252,7 @@ async function verifyTransaction(signature, expectedAmount) {
                 return pre && pre.mint === SPLACE_TOKEN && post.mint === SPLACE_TOKEN;
             });
             
-            console.log('Token changes found:', tokenChanges);
+            console.log('Token changes found:', tokenChanges.length);
             
             // Look for transfer to burn address
             for (const change of tokenChanges) {
@@ -255,11 +303,13 @@ app.post('/place-pixel', async (req, res) => {
             return res.status(400).json({ error: 'Invalid transaction or insufficient token burn' });
         }
         
-        // Update pixel with complete information
-        pixelData[`${x},${y}`] = {
+        const timestamp = Date.now();
+        
+        // Update pixel with complete information in memory
+        pixelState[`${x},${y}`] = {
             color: color,
             wallet: walletAddress,
-            timestamp: Date.now()
+            timestamp: timestamp
         };
         
         console.log(`Updated pixel (${x},${y}) to ${color} by ${walletAddress}`);
@@ -267,8 +317,11 @@ app.post('/place-pixel', async (req, res) => {
         // Update burned total
         totalBurned += COST_PER_PIXEL;
         
-        // Save data immediately after a change
-        savePixelData();
+        // Save to database
+        await Promise.all([
+            savePixel(x, y, color, walletAddress, timestamp),
+            updateTotalBurned(COST_PER_PIXEL)
+        ]);
         
         // Broadcast update to all connected clients
         broadcast({
@@ -277,7 +330,7 @@ app.post('/place-pixel', async (req, res) => {
             y,
             color,
             walletAddress,
-            timestamp: Date.now()
+            timestamp
         });
         
         res.json({ success: true, x, y, color });
@@ -295,7 +348,7 @@ wss.on('connection', (ws) => {
     // Send initial canvas state
     ws.send(JSON.stringify({
         type: 'canvas_state',
-        pixels: pixelData,
+        pixels: pixelState,
         totalBurned: totalBurned
     }));
     
@@ -308,12 +361,11 @@ wss.on('connection', (ws) => {
             if (data.type === 'get_canvas_state') {
                 ws.send(JSON.stringify({
                     type: 'canvas_state',
-                    pixels: pixelData,
+                    pixels: pixelState,
                     totalBurned: totalBurned
                 }));
             } else if (data.type === 'pixel_update') {
-                // This is already handled by the HTTP endpoint
-                // but we could add direct WebSocket updates for testing
+                // This is handled by the HTTP endpoint
                 console.log('Received pixel update via WebSocket');
             }
         } catch (error) {
@@ -327,26 +379,22 @@ wss.on('connection', (ws) => {
     });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`WebSocket server is ready`);
-    console.log(`Using token: ${SPLACE_TOKEN}`);
-    console.log(`Burning to: ${BURN_ADDRESS}`);
-    console.log(`Cost per pixel: ${COST_PER_PIXEL} tokens`);
-});
+// Start the server after connecting to the database
+async function startServer() {
+    await connectToDatabase();
+    
+    const PORT = process.env.PORT || 3000;
+    server.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+        console.log(`WebSocket server is ready`);
+        console.log(`Using token: ${SPLACE_TOKEN}`);
+        console.log(`Burning to: ${BURN_ADDRESS}`);
+        console.log(`Cost per pixel: ${COST_PER_PIXEL} tokens`);
+    });
+}
 
-// Graceful shutdown - save data before exiting
-process.on('SIGINT', () => {
-    console.log('Shutting down server...');
-    savePixelData();
-    process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-    console.log('Shutting down server...');
-    savePixelData();
-    process.exit(0);
+startServer().catch(error => {
+    console.error('Failed to start server:', error);
 });
 
 module.exports = app;
