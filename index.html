@@ -544,6 +544,9 @@
                     ws.send(JSON.stringify({type: 'get_canvas_state'}));
                     // Request total burned tokens
                     ws.send(JSON.stringify({type: 'get_burned_total'}));
+                    
+                    // Load any locally stored pixels as a fallback
+                    loadLocalPixels();
                 };
                 
                 ws.onmessage = (event) => {
@@ -554,10 +557,13 @@
                         console.log('Received canvas state with', Object.keys(data.pixels || {}).length, 'pixels');
                         pixelState = data.pixels || {};
                         updateCanvasState(pixelState);
+                        // Store the received canvas state locally
+                        saveLocalPixels();
                     } else if (data.type === 'pixel_update') {
                         console.log('Pixel update received:', data.x, data.y, data.color);
                         pixelState[`${data.x},${data.y}`] = data.color;
                         updatePixel(data.x, data.y, data.color);
+                        saveLocalPixels();
                         
                         // Update burned total
                         totalBurned += COST_PER_PIXEL;
@@ -571,6 +577,7 @@
                         console.log('Manual pixel update received:', data.x, data.y, data.color);
                         pixelState[`${data.x},${data.y}`] = data.color;
                         updatePixel(data.x, data.y, data.color);
+                        saveLocalPixels();
                         
                         // Update burned total
                         totalBurned += COST_PER_PIXEL;
@@ -585,7 +592,42 @@
                 
                 ws.onerror = (error) => {
                     console.error('WebSocket error:', error);
+                    // If WebSocket fails, at least load local pixels
+                    loadLocalPixels();
                 };
+            }
+            
+            // Save pixels to local storage
+            function saveLocalPixels() {
+                try {
+                    localStorage.setItem('solplace_pixels', JSON.stringify(pixelState));
+                    localStorage.setItem('solplace_timestamp', Date.now().toString());
+                    console.log('Saved pixels to local storage:', Object.keys(pixelState).length);
+                } catch (error) {
+                    console.error('Error saving to local storage:', error);
+                }
+            }
+            
+            // Load pixels from local storage
+            function loadLocalPixels() {
+                try {
+                    const savedPixels = localStorage.getItem('solplace_pixels');
+                    if (savedPixels) {
+                        const localPixelState = JSON.parse(savedPixels);
+                        console.log('Loaded pixels from local storage:', Object.keys(localPixelState).length);
+                        
+                        // Merge with current pixel state, giving preference to server data
+                        Object.entries(localPixelState).forEach(([key, color]) => {
+                            if (!pixelState[key]) {
+                                pixelState[key] = color;
+                            }
+                        });
+                        
+                        updateCanvasState(pixelState);
+                    }
+                } catch (error) {
+                    console.error('Error loading from local storage:', error);
+                }
             }
             
             // Initialize canvas
@@ -802,73 +844,99 @@
                         console.log('Confirmation result:', confirmResult);
                         updateStatus('Transaction confirmed! Placing pixel...');
                         
-                        // Transaction confirmed, now try the server approach first
+                        // Store in database using HTTP endpoint first
+                        const pixelData = {
+                            x: selectedPixel.x,
+                            y: selectedPixel.y,
+                            color: color,
+                            signature: signature,
+                            walletAddress: walletAddress,
+                            burnAddress: BURN_ADDRESS,
+                            tokenMint: SPLACE_TOKEN,
+                            tokenAmount: amount.toString()
+                        };
+                        
+                        // Send via HTTP POST
                         try {
                             const response = await fetch(`${API_URL}/place-pixel`, {
                                 method: 'POST',
                                 headers: {
                                     'Content-Type': 'application/json',
                                 },
-                                body: JSON.stringify({
-                                    x: selectedPixel.x,
-                                    y: selectedPixel.y,
-                                    color: color,
-                                    signature: signature,
-                                    walletAddress: walletAddress,
-                                    burnAddress: BURN_ADDRESS,
-                                    tokenMint: SPLACE_TOKEN,
-                                    tokenAmount: amount.toString()
-                                }),
+                                body: JSON.stringify(pixelData),
                             });
                             
                             const data = await response.json();
                             
                             if (data.success) {
                                 updateStatus(`Pixel placed at (${data.x}, ${data.y})!`);
+                                // If server succeeds, we're done
                                 checkBalance();
                             } else {
-                                // If server approach fails, broadcast via WebSocket
-                                console.log('Server approach failed:', data.error);
-                                updateStatus('Server verification failed, broadcasting update...');
+                                // If server fails, continue with fallback
+                                console.log('Server failed to register pixel:', data.error);
+                                updateStatus('Server verification failed, using fallback method...');
                                 
-                                // Broadcast the pixel update via WebSocket for real-time updates
+                                // Fallback 1: Direct update via WebSocket to broadcast
                                 if (ws && ws.readyState === WebSocket.OPEN) {
                                     ws.send(JSON.stringify({
                                         type: 'manual_pixel_update',
-                                        x: selectedPixel.x,
-                                        y: selectedPixel.y,
-                                        color: color,
-                                        walletAddress: walletAddress,
-                                        signature: signature
+                                        ...pixelData
                                     }));
                                 }
                                 
-                                // Also update locally
-                                updatePixel(selectedPixel.x, selectedPixel.y, color);
+                                // Fallback 2: Update pixel locally and save to local storage
                                 pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
+                                updatePixel(selectedPixel.x, selectedPixel.y, color);
+                                saveLocalPixels();
                                 
-                                updateStatus('Pixel placed successfully (direct update)!');
+                                // Fallback 3: Use server-less direct endpoint to save the pixel
+                                try {
+                                    console.log('Trying alternative storage endpoint...');
+                                    const directResponse = await fetch('https://solplace-pixels.vercel.app/api/store-pixel', {
+                                        method: 'POST',
+                                        headers: {
+                                            'Content-Type': 'application/json',
+                                        },
+                                        body: JSON.stringify({
+                                            ...pixelData,
+                                            timestamp: Date.now()
+                                        })
+                                    });
+                                    
+                                    const directData = await directResponse.json();
+                                    if (directData.success) {
+                                        console.log('Pixel stored in alternative database');
+                                    }
+                                } catch (directError) {
+                                    console.error('Alternative storage error:', directError);
+                                }
+                                
+                                updateStatus('Pixel placed successfully! (You may need to refresh to see updates from others)');
+                                
+                                // Update burn counter and check balance
+                                totalBurned += COST_PER_PIXEL;
+                                updateBurnedDisplay();
                                 checkBalance();
                             }
                         } catch (serverError) {
-                            console.error('Server error:', serverError);
-                            // If there's any error with the server, broadcast via WebSocket
+                            console.error('Server communication error:', serverError);
+                            
+                            // All fallback methods
                             if (ws && ws.readyState === WebSocket.OPEN) {
                                 ws.send(JSON.stringify({
                                     type: 'manual_pixel_update',
-                                    x: selectedPixel.x,
-                                    y: selectedPixel.y,
-                                    color: color,
-                                    walletAddress: walletAddress,
-                                    signature: signature
+                                    ...pixelData
                                 }));
                             }
                             
-                            // Also update locally
-                            updatePixel(selectedPixel.x, selectedPixel.y, color);
                             pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
+                            updatePixel(selectedPixel.x, selectedPixel.y, color);
+                            saveLocalPixels();
                             
-                            updateStatus('Pixel placed successfully (direct update)!');
+                            updateStatus('Pixel placed locally. Transaction successful!');
+                            totalBurned += COST_PER_PIXEL;
+                            updateBurnedDisplay();
                             checkBalance();
                         }
                     } catch (confirmError) {
