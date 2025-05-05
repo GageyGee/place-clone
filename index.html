@@ -483,6 +483,8 @@
         const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111'; // Solana burn address
         const COST_PER_PIXEL = 10000;
         const TOKEN_DECIMALS = 6; // Most tokens use 6-9 decimals, assuming 6 for $SPLACE
+        const TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+        const ASSOCIATED_TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
         
         // DOM elements
         const canvas = document.getElementById('canvas');
@@ -540,7 +542,7 @@
                 return m % 1 === 0 ? m + 'M' : m.toFixed(1) + 'M';
             }
             const b = num / 1000000000;
-            return b % 1 === 0 ? b + 'B' : b.toFixed(1) + 'B';
+            return b % 1 === 0 : b + 'B' : b.toFixed(1) + 'B';
         }
         
         // Initialize canvas with white background immediately
@@ -675,6 +677,19 @@
             }
         }
         
+        // Get Associated Token Address
+        async function getAssociatedTokenAddress(mint, owner) {
+            const [address] = await solanaWeb3.PublicKey.findProgramAddress(
+                [
+                    owner.toBuffer(),
+                    TOKEN_PROGRAM_ID.toBuffer(),
+                    mint.toBuffer(),
+                ],
+                ASSOCIATED_TOKEN_PROGRAM_ID
+            );
+            return address;
+        }
+        
         // Place pixel
         async function placePixel() {
             if (!selectedPixel || !walletAddress) {
@@ -689,56 +704,44 @@
                 const color = colorPicker.value;
                 const { solana } = window;
                 
-                // Get latest blockhash using Phantom's connection
-                const latestBlockhash = await solana.request({
-                    method: "getLatestBlockhash",
-                    params: []
-                });
+                // Get latest blockhash
+                const latestBlockhash = await connection.getLatestBlockhash();
                 
                 // Create transaction
                 const transaction = new solanaWeb3.Transaction();
                 
-                // Add SPL token transfer instruction to burn address  
+                // Add SPL token transfer instruction to burn address
                 const tokenMint = new solanaWeb3.PublicKey(SPLACE_TOKEN);
                 const fromPublicKey = new solanaWeb3.PublicKey(walletAddress);
                 const burnPublicKey = new solanaWeb3.PublicKey(BURN_ADDRESS);
                 
                 // Get associated token addresses
-                const fromTokenAccount = await solanaWeb3.getAssociatedTokenAddress(
-                    tokenMint,
-                    fromPublicKey,
-                    false,
-                    solanaWeb3.TOKEN_PROGRAM_ID,
-                    solanaWeb3.ASSOCIATED_TOKEN_PROGRAM_ID
-                );
+                const fromTokenAccount = await getAssociatedTokenAddress(tokenMint, fromPublicKey);
+                const burnTokenAccount = await getAssociatedTokenAddress(tokenMint, burnPublicKey);
                 
-                const burnTokenAccount = await solanaWeb3.getAssociatedTokenAddress(
-                    tokenMint,
-                    burnPublicKey,
-                    false,
-                    solanaWeb3.TOKEN_PROGRAM_ID,
-                    solanaWeb3.ASSOCIATED_TOKEN_PROGRAM_ID
-                );
+                // Create instruction to transfer tokens (burning by sending to burn address)
+                const instruction = {
+                    keys: [
+                        { pubkey: fromTokenAccount, isSigner: false, isWritable: true },  // source account
+                        { pubkey: burnTokenAccount, isSigner: false, isWritable: true }, // destination account
+                        { pubkey: fromPublicKey, isSigner: true, isWritable: false },    // owner
+                    ],
+                    programId: TOKEN_PROGRAM_ID,
+                    data: Buffer.from([
+                        3, // transfer instruction
+                        ...new Uint8Array(new solanaWeb3.BN(COST_PER_PIXEL * Math.pow(10, TOKEN_DECIMALS)).toArray('le', 8))
+                    ])
+                };
                 
-                // Create transfer instruction
-                const transferInstruction = solanaWeb3.createTransferInstruction(
-                    fromTokenAccount,
-                    burnTokenAccount,
-                    fromPublicKey,
-                    BigInt(COST_PER_PIXEL * Math.pow(10, TOKEN_DECIMALS)), // Include token decimals
-                    [],
-                    solanaWeb3.TOKEN_PROGRAM_ID
-                );
-                
-                transaction.add(transferInstruction);
+                transaction.add(new solanaWeb3.TransactionInstruction(instruction));
                 
                 // Set blockhash and fee payer
-                transaction.recentBlockhash = latestBlockhash.value.blockhash;
+                transaction.recentBlockhash = latestBlockhash.blockhash;
                 transaction.feePayer = fromPublicKey;
                 
                 updateStatus('Waiting for wallet approval...');
                 
-                // Sign and send transaction
+                // Sign and send transaction with Phantom
                 const signedTransaction = await solana.signAndSendTransaction(transaction);
                 
                 updateStatus('Transaction confirmed, placing pixel...');
