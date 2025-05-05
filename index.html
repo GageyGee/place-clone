@@ -328,6 +328,36 @@
             font-size: 24px;
             margin-bottom: 8px;
         }
+
+        /* Tooltip styles */
+        .pixel-tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.85);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+            border: 1px solid rgba(0, 255, 163, 0.3);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+            max-width: 250px;
+        }
+        
+        .wallet-link {
+            color: #00FFA3;
+            text-decoration: none;
+        }
+        
+        .wallet-link:hover {
+            text-decoration: underline;
+        }
+        
+        .timestamp {
+            color: #666;
+            font-size: 10px;
+            margin-top: 4px;
+        }
         
         ::-webkit-scrollbar {
             width: 6px;
@@ -416,6 +446,9 @@
     </div>
     
     <div class="copy-notification" id="copy-notification">Contract address copied!</div>
+    
+    <!-- Tooltip for pixel hover info -->
+    <div id="pixel-tooltip" class="pixel-tooltip" style="display: none;"></div>
     
     <!-- Modal -->
     <div id="how-it-works-modal" class="modal">
@@ -507,6 +540,7 @@
         const connectedIndicator = document.querySelector('.connected-indicator');
         const modal = document.getElementById('how-it-works-modal');
         const copyNotification = document.getElementById('copy-notification');
+        const pixelTooltip = document.getElementById('pixel-tooltip');
         
         // Initialize canvas
         function initCanvas() {
@@ -525,7 +559,10 @@
                     updateStatus('Connected to server');
                     
                     // Request the full canvas state
-                    ws.send(JSON.stringify({ type: 'get_canvas_state' }));
+                    ws.send(JSON.stringify({ 
+                        type: 'get_canvas_state',
+                        client: walletAddress || 'anonymous_' + Math.random().toString(36).substring(2, 10)
+                    }));
                 };
                 
                 ws.onmessage = (event) => {
@@ -539,11 +576,21 @@
                             totalBurned = data.totalBurned || 0;
                             updateBurnedDisplay();
                         } else if (data.type === 'pixel_update') {
-                            console.log('Pixel update received');
-                            pixelState[`${data.x},${data.y}`] = data.color;
+                            console.log('Pixel update received:', data.x, data.y, data.color);
+                            
+                            // Store full pixel data
+                            pixelState[`${data.x},${data.y}`] = {
+                                color: data.color,
+                                wallet: data.walletAddress,
+                                timestamp: data.timestamp
+                            };
+                            
                             updatePixel(data.x, data.y, data.color);
-                            totalBurned += COST_PER_PIXEL;
-                            updateBurnedDisplay();
+                            
+                            if (!data.self) { // Only update burn counter for other users' pixels
+                                totalBurned += COST_PER_PIXEL;
+                                updateBurnedDisplay();
+                            }
                         }
                     } catch (error) {
                         console.error('Error processing message:', error);
@@ -552,11 +599,13 @@
                 
                 ws.onclose = () => {
                     console.log('WebSocket disconnected');
+                    updateStatus('Connection lost. Reconnecting...');
                     setTimeout(initWebSocket, 3000);
                 };
                 
                 ws.onerror = (error) => {
                     console.error('WebSocket error:', error);
+                    updateStatus('Connection error. Retrying...');
                 };
             } catch (error) {
                 console.error('Error creating WebSocket:', error);
@@ -585,14 +634,18 @@
             }
         }
         
-        // Canvas state functions
+        // Canvas state functions with wallet info
         function updateCanvasState(pixels) {
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            Object.entries(pixels).forEach(([key, color]) => {
-                if (color !== '#ffffff') {
-                    const [x, y] = key.split(',').map(Number);
+            Object.entries(pixels).forEach(([key, data]) => {
+                const [x, y] = key.split(',').map(Number);
+                
+                // Handle both string (legacy) and object formats
+                const color = typeof data === 'string' ? data : data.color;
+                
+                if (color && color !== '#ffffff') {
                     ctx.fillStyle = color;
                     ctx.fillRect(x * 5, y * 5, 5, 5);
                 }
@@ -616,6 +669,31 @@
             ctx.strokeStyle = '#00FFA3';
             ctx.lineWidth = 2;
             ctx.strokeRect(x * 5, y * 5, 5, 5);
+        }
+        
+        // Hover tooltip functions
+        function showTooltip(x, y, pixelData) {
+            if (!pixelData || typeof pixelData === 'string' || !pixelData.wallet) {
+                hideTooltip();
+                return;
+            }
+            
+            const wallet = pixelData.wallet;
+            const timestamp = pixelData.timestamp ? new Date(pixelData.timestamp).toLocaleString() : 'Unknown date';
+            const shortWallet = wallet.slice(0, 6) + '...' + wallet.slice(-4);
+            
+            pixelTooltip.innerHTML = `
+                <div>Placed by: <a href="https://solscan.io/account/${wallet}" target="_blank" class="wallet-link">${shortWallet}</a></div>
+                <div class="timestamp">${timestamp}</div>
+            `;
+            
+            pixelTooltip.style.display = 'block';
+            pixelTooltip.style.left = `${x}px`;
+            pixelTooltip.style.top = `${y}px`;
+        }
+        
+        function hideTooltip() {
+            pixelTooltip.style.display = 'none';
         }
         
         // Utility functions
@@ -660,6 +738,28 @@
                 updateStatus(`Selected pixel: (${x}, ${y})`);
             }
         }
+        
+        // Canvas hover event for tooltip
+        canvas.addEventListener('mousemove', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor((e.clientX - rect.left) / currentScale / 5);
+            const y = Math.floor((e.clientY - rect.top) / currentScale / 5);
+            
+            if (x >= 0 && x < 100 && y >= 0 && y < 100) {
+                const pixelKey = `${x},${y}`;
+                const pixelData = pixelState[pixelKey];
+                
+                if (pixelData && (pixelData.wallet || (typeof pixelData !== 'string' && pixelData.color !== '#ffffff'))) {
+                    showTooltip(e.clientX + 10, e.clientY + 10, pixelData);
+                } else {
+                    hideTooltip();
+                }
+            } else {
+                hideTooltip();
+            }
+        });
+        
+        canvas.addEventListener('mouseout', hideTooltip);
         
         // Add zoom functionality
         document.getElementById('canvas-container').addEventListener('wheel', function(e) {
@@ -830,11 +930,18 @@
                     console.log('Transaction confirmed');
                     updateStatus('Transaction confirmed! Placing pixel...');
                     
-                    // 1. Update locally first for immediate feedback
-                    pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
+                    // Store full pixel data locally for immediate feedback
+                    const timestamp = Date.now();
+                    pixelState[`${selectedPixel.x},${selectedPixel.y}`] = {
+                        color: color,
+                        wallet: walletAddress,
+                        timestamp: timestamp
+                    };
+                    
+                    // Update visual display
                     updatePixel(selectedPixel.x, selectedPixel.y, color);
                     
-                    // 2. Send update via WebSocket for real-time sync
+                    // Send via WebSocket for real-time updates
                     if (ws && ws.readyState === WebSocket.OPEN) {
                         ws.send(JSON.stringify({
                             type: 'pixel_update',
@@ -843,41 +950,58 @@
                             color: color,
                             walletAddress: walletAddress,
                             signature: signature,
-                            timestamp: Date.now()
+                            timestamp: timestamp,
+                            self: true // Flag to prevent double-counting
                         }));
                     }
                     
-                    // 3. Also send via HTTP for reliability
-                    fetch(`${API_URL}/place-pixel`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            x: selectedPixel.x,
-                            y: selectedPixel.y,
-                            color: color,
-                            walletAddress: walletAddress,
-                            signature: signature,
-                            burnAddress: BURN_ADDRESS,
-                            tokenMint: SPLACE_TOKEN,
-                            tokenAmount: amount.toString(),
-                            timestamp: Date.now()
-                        })
-                    })
-                    .then(response => response.json())
-                    .then(data => {
+                    // Also send via HTTP for reliable server-side storage
+                    const pixelData = {
+                        x: selectedPixel.x,
+                        y: selectedPixel.y,
+                        color: color,
+                        walletAddress: walletAddress,
+                        signature: signature,
+                        burnAddress: BURN_ADDRESS,
+                        tokenMint: SPLACE_TOKEN,
+                        tokenAmount: amount.toString(),
+                        timestamp: timestamp
+                    };
+                    
+                    try {
+                        const response = await fetch(`${API_URL}/place-pixel`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(pixelData)
+                        });
+                        
+                        const data = await response.json();
+                        
                         if (data.success) {
                             console.log('Pixel placement confirmed by server');
+                            updateStatus('Pixel placed successfully!');
+                            
+                            // Request updated canvas state to ensure synchronization
+                            setTimeout(() => {
+                                if (ws && ws.readyState === WebSocket.OPEN) {
+                                    ws.send(JSON.stringify({
+                                        type: 'get_canvas_state',
+                                        client: walletAddress
+                                    }));
+                                }
+                            }, 1000);
                         } else {
-                            console.log('Server error:', data.error);
+                            console.error('Server error:', data.error);
+                            updateStatus('Warning: Pixel placed, but server sync failed');
                         }
-                    })
-                    .catch(error => {
-                        console.error('HTTP error:', error);
-                    });
+                    } catch (fetchError) {
+                        console.error('HTTP error:', fetchError);
+                        updateStatus('Warning: Pixel visible but server sync failed');
+                    }
                     
-                    updateStatus('Pixel placed successfully!');
+                    // Update local burn counter and check balance
                     totalBurned += COST_PER_PIXEL;
                     updateBurnedDisplay();
                     checkBalance();
@@ -918,15 +1042,24 @@
         };
         
         // Initialize the app
-        initCanvas();
-        initConnection().then(success => {
-            if (success) {
-                console.log('RPC connected');
-                initWebSocket();
-                updateStatus('Connect your wallet to start');
-            } else {
-                updateStatus('Error connecting to Solana. Please refresh.');
-            }
+        function initApp() {
+            console.log('Initializing SolPlace app...');
+            
+            initCanvas();
+            initConnection().then(success => {
+                if (success) {
+                    console.log('RPC connected successfully');
+                    initWebSocket();
+                    updateStatus('Connect your wallet to start');
+                } else {
+                    updateStatus('Error connecting to Solana. Please refresh.');
+                }
+            });
+        }
+        
+        // Start the app when document is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            initApp();
         });
     </script>
 </body>
