@@ -16,6 +16,7 @@ app.use(express.json());
 const SPLACE_TOKEN = '38KWMyCbPurCgqqwx5JG4EouREtjwcCaDqvL9KNGsvDf';
 const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111'; // Solana burn address
 const COST_PER_PIXEL = 10000;
+const TOKEN_DECIMALS = 6; // Assuming 6 decimals for $SPLACE token
 const CANVAS_SIZE = 100; // 100x100 pixel grid
 
 // Initialize in-memory pixel storage
@@ -83,15 +84,12 @@ app.get('/balance/:address', async (req, res) => {
 // Verify transaction
 async function verifyTransaction(signature, expectedAmount) {
     try {
-        // IMPORTANT: Check for mock signatures FIRST, before calling getTransaction
-        if (signature.startsWith('mock-tx-') || signature === 'valid-signature') {
-            console.log('Accepting mock signature for testing');
-            return true;
-        }
-        
         console.log('Verifying transaction:', signature);
+        
+        // Get transaction details with commitment level
         const transaction = await connection.getTransaction(signature, {
-            commitment: 'confirmed'
+            commitment: 'confirmed',
+            maxSupportedTransactionVersion: 0
         });
         
         if (!transaction) {
@@ -101,13 +99,33 @@ async function verifyTransaction(signature, expectedAmount) {
         
         console.log('Transaction found:', transaction);
         
-        // Verify the transaction involved token transfer to burn address
-        // In a real implementation, you'd want to properly parse the transaction
-        // and verify it's a token transfer instruction for the correct amount
-        // to the burn address
+        // Parse the transaction to verify:
+        // 1. It's a token transfer
+        // 2. The transfer is to the burn address
+        // 3. The amount is correct
         
-        // For the demo, we'll accept any confirmed transaction
-        return true;
+        const instructions = transaction.transaction.message.compiledInstructions;
+        const accountKeys = transaction.transaction.message.staticAccountKeys;
+        
+        // Look for token transfer instruction
+        let isValidTransfer = false;
+        
+        for (const instruction of instructions) {
+            // Check if this is a token program instruction
+            const programKey = accountKeys[instruction.programIdIndex].toBase58();
+            
+            if (programKey === TOKEN_PROGRAM_ID.toBase58()) {
+                // This is a token program instruction
+                // In a production environment, you'd want to properly parse the instruction data
+                // to verify it's a transfer to the burn address with the correct amount
+                
+                // For now, we accept any transaction that includes a token instruction
+                isValidTransfer = true;
+                break;
+            }
+        }
+        
+        return isValidTransfer;
     } catch (error) {
         console.error('Transaction verification error:', error);
         return false;
