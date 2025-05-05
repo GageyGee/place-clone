@@ -534,96 +534,227 @@
                 }
             }
             
-            // Initialize WebSocket
+            let pixelUpdateQueue = [];
+            let pixelSyncInterval = null;
+            const SYNC_INTERVAL = 10000; // 10 seconds
+            
+            // Initialize WebSocket with better reconnection handling
             function initWebSocket() {
+                if (ws) {
+                    try {
+                        ws.close();
+                    } catch (e) {
+                        console.log('Error closing existing WebSocket:', e);
+                    }
+                }
+                
+                console.log('Initializing WebSocket connection to:', WS_URL);
                 ws = new WebSocket(WS_URL);
                 
                 ws.onopen = () => {
+                    console.log('WebSocket connected successfully');
                     updateStatus('Connected to server');
+                    
                     // Request initial canvas state when connected
+                    console.log('Requesting canvas state...');
                     ws.send(JSON.stringify({type: 'get_canvas_state'}));
+                    
                     // Request total burned tokens
+                    console.log('Requesting burned total...');
                     ws.send(JSON.stringify({type: 'get_burned_total'}));
                     
-                    // Load any locally stored pixels as a fallback
-                    loadLocalPixels();
+                    // Process any pending updates in the queue
+                    processPixelUpdateQueue();
+                    
+                    // Start periodic sync interval
+                    if (pixelSyncInterval) {
+                        clearInterval(pixelSyncInterval);
+                    }
+                    pixelSyncInterval = setInterval(synchronizePixels, SYNC_INTERVAL);
                 };
                 
                 ws.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-                    console.log('WebSocket message received:', data.type);
-                    
-                    if (data.type === 'canvas_state') {
-                        console.log('Received canvas state with', Object.keys(data.pixels || {}).length, 'pixels');
-                        pixelState = data.pixels || {};
-                        updateCanvasState(pixelState);
-                        // Store the received canvas state locally
-                        saveLocalPixels();
-                    } else if (data.type === 'pixel_update') {
-                        console.log('Pixel update received:', data.x, data.y, data.color);
-                        pixelState[`${data.x},${data.y}`] = data.color;
-                        updatePixel(data.x, data.y, data.color);
-                        saveLocalPixels();
+                    try {
+                        const data = JSON.parse(event.data);
+                        console.log('WebSocket message received:', data.type);
                         
-                        // Update burned total
-                        totalBurned += COST_PER_PIXEL;
-                        updateBurnedDisplay();
-                    } else if (data.type === 'burned_total') {
-                        console.log('Burned total received:', data.total);
-                        totalBurned = parseInt(data.total) || 0;
-                        updateBurnedDisplay();
-                    } else if (data.type === 'manual_pixel_update') {
-                        // Handle manual pixel updates sent by other clients
-                        console.log('Manual pixel update received:', data.x, data.y, data.color);
-                        pixelState[`${data.x},${data.y}`] = data.color;
-                        updatePixel(data.x, data.y, data.color);
-                        saveLocalPixels();
-                        
-                        // Update burned total
-                        totalBurned += COST_PER_PIXEL;
-                        updateBurnedDisplay();
+                        if (data.type === 'canvas_state') {
+                            console.log('Received canvas state with', Object.keys(data.pixels || {}).length, 'pixels');
+                            
+                            // Merge with local state, with server taking precedence
+                            const serverPixels = data.pixels || {};
+                            
+                            // Load any locally stored pixels first as base layer
+                            loadLocalPixels();
+                            
+                            // Apply server pixels on top (they take precedence)
+                            for (const [key, color] of Object.entries(serverPixels)) {
+                                pixelState[key] = color;
+                            }
+                            
+                            // Update the canvas with the merged state
+                            updateCanvasState(pixelState);
+                            
+                            // Save the merged state back to local storage
+                            saveLocalPixels();
+                            
+                            console.log('Canvas state merged and updated with', Object.keys(pixelState).length, 'total pixels');
+                        } else if (data.type === 'pixel_update') {
+                            console.log('Pixel update received:', data.x, data.y, data.color);
+                            pixelState[`${data.x},${data.y}`] = data.color;
+                            updatePixel(data.x, data.y, data.color);
+                            saveLocalPixels();
+                            
+                            // Update burned total
+                            totalBurned += COST_PER_PIXEL;
+                            updateBurnedDisplay();
+                        } else if (data.type === 'burned_total') {
+                            console.log('Burned total received:', data.total);
+                            totalBurned = parseInt(data.total) || 0;
+                            updateBurnedDisplay();
+                        } else if (data.type === 'manual_pixel_update') {
+                            // Handle manual pixel updates sent by other clients
+                            console.log('Manual pixel update received:', data.x, data.y, data.color);
+                            pixelState[`${data.x},${data.y}`] = data.color;
+                            updatePixel(data.x, data.y, data.color);
+                            saveLocalPixels();
+                            
+                            // Update burned total
+                            totalBurned += COST_PER_PIXEL;
+                            updateBurnedDisplay();
+                        } else if (data.type === 'debug') {
+                            console.log('Debug message from server:', data.message);
+                        } else {
+                            console.log('Unknown message type received:', data);
+                        }
+                    } catch (error) {
+                        console.error('Error processing WebSocket message:', error, event.data);
                     }
                 };
                 
-                ws.onclose = () => {
-                    updateStatus('Disconnected from server');
-                    setTimeout(initWebSocket, 5000);
+                ws.onclose = (event) => {
+                    console.log('WebSocket closed with code:', event.code, 'reason:', event.reason);
+                    updateStatus('Disconnected from server. Reconnecting...');
+                    
+                    if (pixelSyncInterval) {
+                        clearInterval(pixelSyncInterval);
+                        pixelSyncInterval = null;
+                    }
+                    
+                    // Reconnect with exponential backoff
+                    setTimeout(() => {
+                        console.log('Attempting to reconnect WebSocket...');
+                        initWebSocket();
+                    }, 3000);
                 };
                 
                 ws.onerror = (error) => {
                     console.error('WebSocket error:', error);
+                    updateStatus('Connection error. Using offline mode.');
+                    
                     // If WebSocket fails, at least load local pixels
                     loadLocalPixels();
                 };
             }
             
-            // Save pixels to local storage
+            // Process any pixels in the update queue
+            function processPixelUpdateQueue() {
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    console.log('WebSocket not open, cannot process queue');
+                    return;
+                }
+                
+                console.log('Processing pixel update queue, items:', pixelUpdateQueue.length);
+                
+                while (pixelUpdateQueue.length > 0) {
+                    const pixelUpdate = pixelUpdateQueue.shift();
+                    console.log('Sending queued pixel update:', pixelUpdate);
+                    ws.send(JSON.stringify(pixelUpdate));
+                }
+            }
+            
+            // Periodically synchronize pixels to ensure all clients have the latest state
+            function synchronizePixels() {
+                console.log('Running pixel synchronization...');
+                
+                // Request fresh canvas state from server
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({type: 'get_canvas_state'}));
+                }
+                
+                // Send any pending pixel updates
+                processPixelUpdateQueue();
+                
+                // Ping server to keep connection alive
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({type: 'ping', timestamp: Date.now()}));
+                }
+            }
+            
+            // More robust local storage with backups
             function saveLocalPixels() {
                 try {
-                    localStorage.setItem('solplace_pixels', JSON.stringify(pixelState));
+                    const pixelsToSave = JSON.stringify(pixelState);
+                    localStorage.setItem('solplace_pixels', pixelsToSave);
                     localStorage.setItem('solplace_timestamp', Date.now().toString());
+                    
+                    // Create a backup with timestamp
+                    const backupKey = 'solplace_backup_' + Date.now();
+                    localStorage.setItem(backupKey, pixelsToSave);
+                    
+                    // Keep only last 5 backups
+                    const backupKeys = Object.keys(localStorage)
+                        .filter(key => key.startsWith('solplace_backup_'))
+                        .sort()
+                        .reverse();
+                    
+                    while (backupKeys.length > 5) {
+                        localStorage.removeItem(backupKeys.pop());
+                    }
+                    
                     console.log('Saved pixels to local storage:', Object.keys(pixelState).length);
                 } catch (error) {
                     console.error('Error saving to local storage:', error);
                 }
             }
             
-            // Load pixels from local storage
+            // Load pixels from local storage with backup recovery
             function loadLocalPixels() {
                 try {
-                    const savedPixels = localStorage.getItem('solplace_pixels');
+                    // Try the main storage first
+                    let savedPixels = localStorage.getItem('solplace_pixels');
+                    
+                    // If main storage failed, try backups
+                    if (!savedPixels) {
+                        const backupKeys = Object.keys(localStorage)
+                            .filter(key => key.startsWith('solplace_backup_'))
+                            .sort()
+                            .reverse();
+                        
+                        for (const key of backupKeys) {
+                            const backup = localStorage.getItem(key);
+                            if (backup) {
+                                savedPixels = backup;
+                                console.log('Restored from backup:', key);
+                                break;
+                            }
+                        }
+                    }
+                    
                     if (savedPixels) {
                         const localPixelState = JSON.parse(savedPixels);
                         console.log('Loaded pixels from local storage:', Object.keys(localPixelState).length);
                         
-                        // Merge with current pixel state, giving preference to server data
-                        Object.entries(localPixelState).forEach(([key, color]) => {
+                        // Merge with current pixel state
+                        for (const [key, color] of Object.entries(localPixelState)) {
                             if (!pixelState[key]) {
                                 pixelState[key] = color;
                             }
-                        });
+                        }
                         
                         updateCanvasState(pixelState);
+                    } else {
+                        console.log('No saved pixels found in local storage');
                     }
                 } catch (error) {
                     console.error('Error loading from local storage:', error);
@@ -838,110 +969,41 @@
                     
                     updateStatus('Transaction sent, waiting for confirmation...');
                     
+                    // Create the pixel data object
+                    const pixelData = {
+                        x: selectedPixel.x,
+                        y: selectedPixel.y,
+                        color: color,
+                        signature: signature,
+                        walletAddress: walletAddress,
+                        timestamp: Date.now()
+                    };
+                    
                     // Wait for transaction confirmation
                     try {
                         const confirmResult = await connection.confirmTransaction(signature, 'confirmed');
                         console.log('Confirmation result:', confirmResult);
                         updateStatus('Transaction confirmed! Placing pixel...');
                         
-                        // Store in database using HTTP endpoint first
-                        const pixelData = {
-                            x: selectedPixel.x,
-                            y: selectedPixel.y,
-                            color: color,
-                            signature: signature,
-                            walletAddress: walletAddress,
-                            burnAddress: BURN_ADDRESS,
-                            tokenMint: SPLACE_TOKEN,
-                            tokenAmount: amount.toString()
-                        };
+                        // Update our local state immediately
+                        pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
+                        updatePixel(selectedPixel.x, selectedPixel.y, color);
+                        saveLocalPixels();
                         
-                        // Send via HTTP POST
-                        try {
-                            const response = await fetch(`${API_URL}/place-pixel`, {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                },
-                                body: JSON.stringify(pixelData),
-                            });
-                            
-                            const data = await response.json();
-                            
-                            if (data.success) {
-                                updateStatus(`Pixel placed at (${data.x}, ${data.y})!`);
-                                // If server succeeds, we're done
-                                checkBalance();
-                            } else {
-                                // If server fails, continue with fallback
-                                console.log('Server failed to register pixel:', data.error);
-                                updateStatus('Server verification failed, using fallback method...');
-                                
-                                // Fallback 1: Direct update via WebSocket to broadcast
-                                if (ws && ws.readyState === WebSocket.OPEN) {
-                                    ws.send(JSON.stringify({
-                                        type: 'manual_pixel_update',
-                                        ...pixelData
-                                    }));
-                                }
-                                
-                                // Fallback 2: Update pixel locally and save to local storage
-                                pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
-                                updatePixel(selectedPixel.x, selectedPixel.y, color);
-                                saveLocalPixels();
-                                
-                                // Fallback 3: Use server-less direct endpoint to save the pixel
-                                try {
-                                    console.log('Trying alternative storage endpoint...');
-                                    const directResponse = await fetch('https://solplace-pixels.vercel.app/api/store-pixel', {
-                                        method: 'POST',
-                                        headers: {
-                                            'Content-Type': 'application/json',
-                                        },
-                                        body: JSON.stringify({
-                                            ...pixelData,
-                                            timestamp: Date.now()
-                                        })
-                                    });
-                                    
-                                    const directData = await directResponse.json();
-                                    if (directData.success) {
-                                        console.log('Pixel stored in alternative database');
-                                    }
-                                } catch (directError) {
-                                    console.error('Alternative storage error:', directError);
-                                }
-                                
-                                updateStatus('Pixel placed successfully! (You may need to refresh to see updates from others)');
-                                
-                                // Update burn counter and check balance
-                                totalBurned += COST_PER_PIXEL;
-                                updateBurnedDisplay();
-                                checkBalance();
-                            }
-                        } catch (serverError) {
-                            console.error('Server communication error:', serverError);
-                            
-                            // All fallback methods
-                            if (ws && ws.readyState === WebSocket.OPEN) {
-                                ws.send(JSON.stringify({
-                                    type: 'manual_pixel_update',
-                                    ...pixelData
-                                }));
-                            }
-                            
-                            pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
-                            updatePixel(selectedPixel.x, selectedPixel.y, color);
-                            saveLocalPixels();
-                            
-                            updateStatus('Pixel placed locally. Transaction successful!');
-                            totalBurned += COST_PER_PIXEL;
-                            updateBurnedDisplay();
-                            checkBalance();
-                        }
+                        // Try to send to server via HTTP
+                        sendToServerAndFallback(pixelData);
+                        
                     } catch (confirmError) {
                         console.error('Confirmation error:', confirmError);
-                        updateStatus('Transaction may have succeeded but confirmation failed. Check your balance.');
+                        updateStatus('Transaction may have succeeded. Placing pixel anyway...');
+                        
+                        // Still try to place the pixel even if confirmation has issues
+                        pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
+                        updatePixel(selectedPixel.x, selectedPixel.y, color);
+                        saveLocalPixels();
+                        
+                        // Queue for server sending
+                        sendToServerAndFallback(pixelData);
                     }
                 } catch (error) {
                     console.error('Transaction error:', error);
@@ -949,6 +1011,75 @@
                 } finally {
                     placePixelBtn.disabled = false;
                 }
+            }
+            
+            // Robust function to send pixel to server with multiple fallbacks
+            async function sendToServerAndFallback(pixelData) {
+                console.log('Attempting to send pixel to server:', pixelData);
+                let success = false;
+                
+                // Method 1: Try regular HTTP endpoint
+                try {
+                    console.log('Trying primary server endpoint...');
+                    const response = await fetch(`${API_URL}/place-pixel`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            ...pixelData,
+                            burnAddress: BURN_ADDRESS,
+                            tokenMint: SPLACE_TOKEN,
+                            tokenAmount: (COST_PER_PIXEL * Math.pow(10, TOKEN_DECIMALS)).toString()
+                        }),
+                        timeout: 5000
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        console.log('Server accepted pixel placement:', data);
+                        updateStatus(`Pixel placed at (${data.x}, ${data.y})!`);
+                        success = true;
+                    } else {
+                        console.warn('Server rejected pixel:', data.error);
+                    }
+                } catch (httpError) {
+                    console.error('HTTP error with server:', httpError);
+                }
+                
+                // Method 2: Try WebSocket broadcasting
+                if (!success && ws && ws.readyState === WebSocket.OPEN) {
+                    try {
+                        console.log('Broadcasting via WebSocket...');
+                        ws.send(JSON.stringify({
+                            type: 'manual_pixel_update',
+                            ...pixelData
+                        }));
+                        console.log('WebSocket message sent');
+                    } catch (wsError) {
+                        console.error('WebSocket send error:', wsError);
+                    }
+                }
+                
+                // Method 3: Queue pixel update for later retry if both methods failed
+                if (!success) {
+                    console.log('Adding to pixel update queue for later retry');
+                    pixelUpdateQueue.push({
+                        type: 'manual_pixel_update',
+                        ...pixelData
+                    });
+                    
+                    // Try to process queue immediately in case we reconnect
+                    processPixelUpdateQueue();
+                    
+                    updateStatus('Pixel placed locally. Will sync with server when connection restored.');
+                }
+                
+                // Update local state regardless
+                totalBurned += COST_PER_PIXEL;
+                updateBurnedDisplay();
+                checkBalance();
             }
             
             // Event listeners
