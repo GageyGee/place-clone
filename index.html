@@ -534,62 +534,30 @@
                 }
             }
             
-            // Simple WebSocket initialization
-            function initWebSocket() {
-                if (ws) {
-                    try { ws.close(); } catch (e) {}
-                }
-                
-                console.log('Connecting to WebSocket server...');
-                ws = new WebSocket(WS_URL);
-                
-                ws.onopen = () => {
-                    console.log('WebSocket connected');
-                    updateStatus('Connected to server');
-                    
-                    // Request the full canvas state on connection
-                    ws.send(JSON.stringify({
-                        type: 'get_canvas_state'
-                    }));
-                };
-                
-                ws.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data);
-                        console.log('WebSocket message received:', data.type);
-                        
-                        if (data.type === 'canvas_state') {
-                            console.log('Received canvas state with', Object.keys(data.pixels || {}).length, 'pixels');
-                            pixelState = data.pixels || {};
-                            updateCanvasState(pixelState);
-                        } else if (data.type === 'pixel_update' || data.type === 'manual_pixel_update') {
-                            console.log('Received pixel update:', data.x, data.y, data.color);
-                            pixelState[`${data.x},${data.y}`] = data.color;
-                            updatePixel(data.x, data.y, data.color);
-                            
-                            // Update burned total
-                            totalBurned += COST_PER_PIXEL;
-                            updateBurnedDisplay();
-                        } else if (data.type === 'burned_total') {
-                            console.log('Received burned total:', data.total);
-                            totalBurned = parseInt(data.total) || 0;
-                            updateBurnedDisplay();
-                        }
-                    } catch (error) {
-                        console.error('Error processing WebSocket message:', error);
-                    }
-                };
-                
-                ws.onclose = () => {
-                    console.log('WebSocket disconnected');
-                    updateStatus('Disconnected. Reconnecting...');
-                    setTimeout(initWebSocket, 2000);
-                };
-                
-                ws.onerror = (error) => {
-                    console.error('WebSocket error:', error);
-                    updateStatus('Connection error. Reconnecting...');
-                };
+            // Initialize canvas once on load
+            function initCanvas() {
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                // Immediately fetch the current canvas state
+                fetchCanvasState();
+                // Set up polling to keep the canvas updated
+                setInterval(fetchCanvasState, 5000); // Poll every 5 seconds
+            }
+            
+            // Simple HTTP-based approach to get canvas state
+            function fetchCanvasState() {
+                fetch(`${API_URL}/canvas`)
+                    .then(response => response.json())
+                    .then(data => {
+                        console.log('Canvas state fetched:', Object.keys(data.pixels || {}).length, 'pixels');
+                        pixelState = data.pixels || {};
+                        updateCanvasState(pixelState);
+                        totalBurned = data.totalBurned || 0;
+                        updateBurnedDisplay();
+                    })
+                    .catch(error => {
+                        console.error('Error fetching canvas state:', error);
+                    });
             }
             
             // Initialize canvas
@@ -806,9 +774,12 @@
                         console.log('Confirmation result:', confirmResult);
                         updateStatus('Transaction confirmed! Placing pixel...');
                         
-                        // Create simple pixel data object
+                        // Update locally first for immediate feedback
+                        pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
+                        updatePixel(selectedPixel.x, selectedPixel.y, color);
+                        
+                        // Simple direct HTTP request to place pixel
                         const pixelData = {
-                            type: 'pixel_update',  // Use same message type for consistency
                             x: selectedPixel.x,
                             y: selectedPixel.y,
                             color: color,
@@ -817,19 +788,35 @@
                             timestamp: Date.now()
                         };
                         
-                        // Update local state first for immediate feedback
-                        pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
-                        updatePixel(selectedPixel.x, selectedPixel.y, color);
-                        
-                        // Then broadcast to all connected clients
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            console.log('Broadcasting pixel update to all users');
-                            ws.send(JSON.stringify(pixelData));
-                            updateStatus('Pixel placed successfully!');
-                        } else {
-                            console.warn('WebSocket not connected, cannot broadcast update');
-                            updateStatus('Pixel placed locally. Refresh to see updates from others.');
-                        }
+                        fetch(`${API_URL}/place-pixel`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                ...pixelData,
+                                burnAddress: BURN_ADDRESS,
+                                tokenMint: SPLACE_TOKEN,
+                                tokenAmount: amount.toString()
+                            })
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.success) {
+                                console.log('Pixel placement confirmed by server');
+                                updateStatus('Pixel placed successfully!');
+                                // Immediately fetch latest canvas to stay in sync
+                                fetchCanvasState();
+                            } else {
+                                console.warn('Server rejected pixel:', data.error);
+                                updateStatus('Pixel placed locally. Server sync failed.');
+                                // Keep our local update even if server rejected it
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error placing pixel:', error);
+                            updateStatus('Pixel placed locally. Server unreachable.');
+                        });
                         
                         // Update burned total
                         totalBurned += COST_PER_PIXEL;
@@ -851,7 +838,6 @@
             function initApp() {
                 initConnection().then(() => {
                     initCanvas();
-                    initWebSocket();
                     updateStatus('Connect your wallet to start');
                 }).catch(error => {
                     updateStatus('Failed to connect to RPC. Please check your configuration.');
