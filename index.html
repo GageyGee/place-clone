@@ -366,7 +366,7 @@
 <body>
     <div id="container">
         <div id="canvas-container">
-            <canvas id="canvas" width="500" height="500"></canvas>
+            <canvas id="canvas" width="500" height="500" onclick="canvasClick(event)"></canvas>
         </div>
         <div id="sidebar">
             <div>
@@ -376,7 +376,7 @@
             
             <div class="card">
                 <div class="card-title">Wallet Connection</div>
-                <button id="connect-wallet">Connect Phantom</button>
+                <button id="connect-wallet" onclick="connectWallet()">Connect Phantom</button>
                 <p id="wallet-info" style="margin-top: 12px;">
                     <span class="connected-indicator" style="display: none;"></span>
                     <span id="wallet-address">Not connected</span>
@@ -404,13 +404,13 @@
                 <div class="burn-label">$SPLACE Burned Total</div>
             </div>
             
-            <button id="place-pixel" disabled>Place Pixel</button>
+            <button id="place-pixel" onclick="placePixel()" disabled>Place Pixel</button>
             
             <div id="status-message">Connect your wallet to start</div>
             
             <div class="footer-buttons">
-                <button id="contract-address-btn">Copy $SPLACE CA</button>
-                <button id="how-it-works-btn">How It Works</button>
+                <button id="contract-address-btn" onclick="copyContractAddress()">Copy $SPLACE CA</button>
+                <button id="how-it-works-btn" onclick="showHowItWorks()">How It Works</button>
             </div>
         </div>
     </div>
@@ -420,7 +420,7 @@
     <!-- Modal -->
     <div id="how-it-works-modal" class="modal">
         <div class="modal-content">
-            <span class="close">&times;</span>
+            <span class="close" onclick="closeModal()">&times;</span>
             <h2>How SolPlace Works</h2>
             
             <h3>Getting Started</h3>
@@ -474,570 +474,460 @@
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
     
     <script>
-        // Wait for scripts to load
-        setTimeout(() => {
-            const API_URL = 'https://place-clone-backend.onrender.com';
-            const WS_URL = 'wss://place-clone-backend.onrender.com';
-            
-            const SPLACE_TOKEN = '38KWMyCbPurCgqqwx5JG4EouREtjwcCaDqvL9KNGsvDf';
-            const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111';
-            const COST_PER_PIXEL = 10000;
-            const TOKEN_DECIMALS = 6;
-            
-            const TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
-            const ASSOCIATED_TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
-            
-            const canvas = document.getElementById('canvas');
-            const ctx = canvas.getContext('2d');
-            const colorPicker = document.getElementById('color-picker');
-            const connectWalletBtn = document.getElementById('connect-wallet');
-            const placePixelBtn = document.getElementById('place-pixel');
-            const statusMessage = document.getElementById('status-message');
-            const walletAddressSpan = document.getElementById('wallet-address');
-            const balanceSpan = document.getElementById('balance');
-            const burnedAmountSpan = document.getElementById('burned-amount');
-            const connectedIndicator = document.querySelector('.connected-indicator');
-            const howItWorksBtn = document.getElementById('how-it-works-btn');
-            const contractAddressBtn = document.getElementById('contract-address-btn');
-            const modal = document.getElementById('how-it-works-modal');
-            const closeBtn = document.querySelector('.close');
-            const copyNotification = document.getElementById('copy-notification');
-            
-            let selectedPixel = null;
-            let walletAddress = null;
-            let ws = null;
-            let connection = null;
-            let currentScale = 1;
-            let pixelState = {};
-            let totalBurned = 0;
-            
-            // Initialize connection with your paid QuickNode endpoint
-            async function initConnection() {
-                updateStatus('Connecting to Solana network...');
+        // Global variables
+        const API_URL = 'https://place-clone-backend.onrender.com';
+        const WS_URL = 'wss://place-clone-backend.onrender.com';
+        
+        const SPLACE_TOKEN = '38KWMyCbPurCgqqwx5JG4EouREtjwcCaDqvL9KNGsvDf';
+        const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111';
+        const COST_PER_PIXEL = 10000;
+        const TOKEN_DECIMALS = 6;
+        
+        const TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+        const ASSOCIATED_TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+        
+        let selectedPixel = null;
+        let walletAddress = null;
+        let ws = null;
+        let connection = null;
+        let currentScale = 1;
+        let pixelState = {};
+        let totalBurned = 0;
+        
+        // DOM elements
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const colorPicker = document.getElementById('color-picker');
+        const connectWalletBtn = document.getElementById('connect-wallet');
+        const placePixelBtn = document.getElementById('place-pixel');
+        const statusMessage = document.getElementById('status-message');
+        const walletAddressSpan = document.getElementById('wallet-address');
+        const balanceSpan = document.getElementById('balance');
+        const burnedAmountSpan = document.getElementById('burned-amount');
+        const connectedIndicator = document.querySelector('.connected-indicator');
+        const modal = document.getElementById('how-it-works-modal');
+        const copyNotification = document.getElementById('copy-notification');
+        
+        // Initialize canvas
+        function initCanvas() {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        
+        // Initialize WebSocket
+        function initWebSocket() {
+            try {
+                console.log('Connecting to WebSocket server...');
+                ws = new WebSocket(WS_URL);
                 
-                try {
-                    // Use your paid QuickNode endpoint
-                    const endpoint = 'https://radial-chaotic-pool.solana-mainnet.quiknode.pro/192e8e76f0a288f5a32ace0b676f7f34778f219f/';
-                    console.log(`Connecting to RPC: ${endpoint}`);
-                    connection = new solanaWeb3.Connection(endpoint, 'confirmed');
-                    const version = await connection.getVersion();
-                    console.log('Connected successfully:', version);
-                    return true;
-                } catch (error) {
-                    console.error('RPC connection error:', error);
-                    // Fallback to public endpoint if QuickNode fails
+                ws.onopen = () => {
+                    console.log('WebSocket connected');
+                    updateStatus('Connected to server');
+                    
+                    // Request the full canvas state
+                    ws.send(JSON.stringify({ type: 'get_canvas_state' }));
+                };
+                
+                ws.onmessage = (event) => {
                     try {
-                        const fallbackEndpoint = 'https://api.mainnet-beta.solana.com';
-                        console.log(`Trying fallback RPC: ${fallbackEndpoint}`);
-                        connection = new solanaWeb3.Connection(fallbackEndpoint, 'confirmed');
-                        const version = await connection.getVersion();
-                        console.log('Connected to fallback successfully:', version);
-                        return true;
-                    } catch (fallbackError) {
-                        console.error('Fallback RPC connection error:', fallbackError);
-                        throw new Error('Failed to connect to any RPC endpoint');
-                    }
-                }
-            }
-            
-            // Simple WebSocket initialization for real-time updates
-            let ws = null;
-            let wsReconnectTimer = null;
-            
-            function initWebSocket() {
-                if (ws) {
-                    try { ws.close(); } catch (e) {}
-                }
-                
-                clearTimeout(wsReconnectTimer);
-                
-                try {
-                    console.log('Connecting to WebSocket server...');
-                    ws = new WebSocket(WS_URL);
-                    
-                    ws.onopen = () => {
-                        console.log('WebSocket connected');
-                        updateStatus('Connected to server');
+                        const data = JSON.parse(event.data);
                         
-                        // Request the full canvas state
-                        ws.send(JSON.stringify({ type: 'get_canvas_state' }));
-                    };
-                    
-                    ws.onmessage = (event) => {
-                        try {
-                            const data = JSON.parse(event.data);
-                            
-                            if (data.type === 'canvas_state') {
-                                console.log('Canvas state received:', Object.keys(data.pixels || {}).length, 'pixels');
-                                pixelState = data.pixels || {};
-                                totalBurned = data.totalBurned || 0;
-                                updateCanvasState(pixelState);
-                                updateBurnedDisplay();
-                            } else if (data.type === 'pixel_update') {
-                                console.log('Pixel update:', data.x, data.y, data.color);
-                                pixelState[`${data.x},${data.y}`] = data.color;
-                                updatePixel(data.x, data.y, data.color);
-                                totalBurned += COST_PER_PIXEL;
-                                updateBurnedDisplay();
-                            }
-                        } catch (error) {
-                            console.error('Error processing message:', error);
+                        if (data.type === 'canvas_state') {
+                            console.log('Canvas state received');
+                            pixelState = data.pixels || {};
+                            updateCanvasState(pixelState);
+                            totalBurned = data.totalBurned || 0;
+                            updateBurnedDisplay();
+                        } else if (data.type === 'pixel_update') {
+                            console.log('Pixel update received');
+                            pixelState[`${data.x},${data.y}`] = data.color;
+                            updatePixel(data.x, data.y, data.color);
+                            totalBurned += COST_PER_PIXEL;
+                            updateBurnedDisplay();
                         }
-                    };
-                    
-                    ws.onclose = () => {
-                        console.log('WebSocket disconnected');
-                        
-                        // Don't keep showing reconnection messages if we're disconnected briefly
-                        if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
-                        
-                        wsReconnectTimer = setTimeout(() => {
-                            updateStatus('Reconnecting...');
-                            initWebSocket();
-                        }, 2000);
-                    };
-                    
-                    ws.onerror = (error) => {
-                        console.error('WebSocket error:', error);
-                    };
-                } catch (error) {
-                    console.error('Error creating WebSocket:', error);
-                    wsReconnectTimer = setTimeout(initWebSocket, 3000);
-                }
-            }
-            
-            // Initialize canvas
-            function initCanvas() {
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-            }
-            
-            // Update canvas
-            function updateCanvasState(pixels) {
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                
-                Object.entries(pixels).forEach(([key, color]) => {
-                    if (color !== '#ffffff') {
-                        const [x, y] = key.split(',').map(Number);
-                        ctx.fillStyle = color;
-                        ctx.fillRect(x * 5, y * 5, 5, 5);
+                    } catch (error) {
+                        console.error('Error processing message:', error);
                     }
-                });
+                };
                 
-                if (selectedPixel) {
-                    highlightPixel(selectedPixel.x, selectedPixel.y);
-                }
+                ws.onclose = () => {
+                    console.log('WebSocket disconnected');
+                    setTimeout(initWebSocket, 3000);
+                };
+                
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                };
+            } catch (error) {
+                console.error('Error creating WebSocket:', error);
+                setTimeout(initWebSocket, 3000);
             }
-            
-            function updatePixel(x, y, color) {
-                ctx.fillStyle = color;
-                ctx.fillRect(x * 5, y * 5, 5, 5);
-            }
-            
-            function highlightPixel(x, y) {
-                ctx.strokeStyle = '#00FFA3';
-                ctx.lineWidth = 2;
-                ctx.strokeRect(x * 5, y * 5, 5, 5);
-            }
-            
-            function formatBalance(num) {
-                const actualValue = num / Math.pow(10, TOKEN_DECIMALS);
-                if (actualValue < 1000) return actualValue.toString();
-                if (actualValue < 1000000) {
-                    const k = actualValue / 1000;
-                    return k % 1 === 0 ? k + 'K' : k.toFixed(1) + 'K';
-                }
-                const m = actualValue / 1000000;
-                return m % 1 === 0 ? m + 'M' : m.toFixed(1) + 'M';
-            }
-            
-            function formatBurnCount(num) {
-                if (num < 1000) return num.toString();
-                if (num < 1000000) {
-                    const k = num / 1000;
-                    return k % 1 === 0 ? k + 'K' : k.toFixed(1) + 'K';
-                }
-                const m = num / 1000000;
-                return m % 1 === 0 ? m + 'M' : m.toFixed(1) + 'M';
-            }
-            
-            function updateStatus(message) {
-                statusMessage.textContent = message;
-            }
-            
-            function updateBurnedDisplay() {
-                burnedAmountSpan.textContent = formatBurnCount(totalBurned);
-            }
-            
-            // Connect wallet
-            async function connectWallet() {
+        }
+        
+        // Initialize connection to Solana
+        async function initConnection() {
+            try {
+                const endpoint = 'https://radial-chaotic-pool.solana-mainnet.quiknode.pro/192e8e76f0a288f5a32ace0b676f7f34778f219f/';
+                console.log('Connecting to Solana RPC');
+                connection = new solanaWeb3.Connection(endpoint, 'confirmed');
+                return true;
+            } catch (error) {
+                console.error('RPC connection error:', error);
+                // Fallback to public endpoint
                 try {
-                    const { solana } = window;
-                    if (!solana || !solana.isPhantom) {
-                        throw new Error('Phantom wallet not installed!');
-                    }
-                    
-                    const response = await solana.connect();
-                    walletAddress = response.publicKey.toString();
-                    walletAddressSpan.textContent = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
-                    connectWalletBtn.textContent = 'Connected';
-                    connectWalletBtn.disabled = true;
-                    connectedIndicator.style.display = 'inline-block';
-                    placePixelBtn.disabled = false;
-                    updateStatus('Wallet connected!');
-                    
-                    checkBalance();
-                } catch (error) {
-                    updateStatus(`Error: ${error.message}`);
+                    const fallbackEndpoint = 'https://api.mainnet-beta.solana.com';
+                    connection = new solanaWeb3.Connection(fallbackEndpoint, 'confirmed');
+                    return true;
+                } catch (fallbackError) {
+                    console.error('Fallback RPC error:', fallbackError);
+                    return false;
                 }
             }
+        }
+        
+        // Canvas state functions
+        function updateCanvasState(pixels) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            async function checkBalance() {
-                balanceSpan.textContent = 'Loading...';
-                try {
-                    const response = await fetch(`${API_URL}/balance/${walletAddress}`);
-                    const data = await response.json();
-                    if (data.error) {
-                        throw new Error(data.error);
-                    }
-                    balanceSpan.textContent = formatBalance(data.formatted);
-                } catch (error) {
-                    console.error('Balance check error:', error);
-                    balanceSpan.textContent = '0';
+            Object.entries(pixels).forEach(([key, color]) => {
+                if (color !== '#ffffff') {
+                    const [x, y] = key.split(',').map(Number);
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x * 5, y * 5, 5, 5);
                 }
-            }
+            });
             
-            async function getAssociatedTokenAddress(mint, owner) {
-                const [address] = await solanaWeb3.PublicKey.findProgramAddress(
-                    [
-                        owner.toBuffer(),
-                        TOKEN_PROGRAM_ID.toBuffer(),
-                        mint.toBuffer(),
-                    ],
-                    ASSOCIATED_TOKEN_PROGRAM_ID
-                );
-                return address;
+            if (selectedPixel) {
+                highlightPixel(selectedPixel.x, selectedPixel.y);
             }
+        }
+        
+        function updatePixel(x, y, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x * 5, y * 5, 5, 5);
             
-            function createTokenTransferInstruction(fromTokenAccount, toTokenAccount, owner, amount) {
-                const data = new Uint8Array(9);
-                data[0] = 3; // Transfer instruction
-                const view = new DataView(data.buffer);
-                view.setBigUint64(1, BigInt(amount), true);
-                
-                return new solanaWeb3.TransactionInstruction({
-                    keys: [
-                        { pubkey: fromTokenAccount, isSigner: false, isWritable: true },
-                        { pubkey: toTokenAccount, isSigner: false, isWritable: true },
-                        { pubkey: owner, isSigner: true, isWritable: false },
-                    ],
-                    programId: TOKEN_PROGRAM_ID,
-                    data
-                });
+            if (selectedPixel && selectedPixel.x === x && selectedPixel.y === y) {
+                highlightPixel(x, y);
             }
-            
-            function createAssociatedTokenAccountInstruction(payer, associatedToken, owner, mint) {
-                const keys = [
-                    { pubkey: payer, isSigner: true, isWritable: true },
-                    { pubkey: associatedToken, isSigner: false, isWritable: true },
-                    { pubkey: owner, isSigner: false, isWritable: false },
-                    { pubkey: mint, isSigner: false, isWritable: false },
-                    { pubkey: solanaWeb3.SystemProgram.programId, isSigner: false, isWritable: false },
-                    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-                    { pubkey: solanaWeb3.SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
-                ];
-                
-                return new solanaWeb3.TransactionInstruction({
-                    keys,
-                    programId: ASSOCIATED_TOKEN_PROGRAM_ID,
-                    data: new Uint8Array(0)
-                });
+        }
+        
+        function highlightPixel(x, y) {
+            ctx.strokeStyle = '#00FFA3';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x * 5, y * 5, 5, 5);
+        }
+        
+        // Utility functions
+        function formatBalance(num) {
+            const actualValue = num / Math.pow(10, TOKEN_DECIMALS);
+            if (actualValue < 1000) return actualValue.toString();
+            if (actualValue < 1000000) {
+                const k = actualValue / 1000;
+                return k % 1 === 0 ? k + 'K' : k.toFixed(1) + 'K';
             }
-            
-            // Initialize canvas
-            function initCanvas() {
-                ctx.fillStyle = '#ffffff';
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            const m = actualValue / 1000000;
+            return m % 1 === 0 ? m + 'M' : m.toFixed(1) + 'M';
+        }
+        
+        function formatBurnCount(num) {
+            if (num < 1000) return num.toString();
+            if (num < 1000000) {
+                const k = num / 1000;
+                return k % 1 === 0 ? k + 'K' : k.toFixed(1) + 'K';
             }
+            const m = num / 1000000;
+            return m % 1 === 0 ? m + 'M' : m.toFixed(1) + 'M';
+        }
+        
+        function updateStatus(message) {
+            statusMessage.textContent = message;
+        }
+        
+        function updateBurnedDisplay() {
+            burnedAmountSpan.textContent = formatBurnCount(totalBurned);
+        }
+        
+        // Event handlers
+        function canvasClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor((e.clientX - rect.left) / currentScale / 5);
+            const y = Math.floor((e.clientY - rect.top) / currentScale / 5);
             
-            async function placePixel() {
-                if (!selectedPixel || !walletAddress) {
-                    updateStatus('Please select a pixel and connect wallet');
+            if (x >= 0 && x < 100 && y >= 0 && y < 100) {
+                selectedPixel = { x, y };
+                updateCanvasState(pixelState);
+                updateStatus(`Selected pixel: (${x}, ${y})`);
+            }
+        }
+        
+        // Add zoom functionality
+        document.getElementById('canvas-container').addEventListener('wheel', function(e) {
+            e.preventDefault();
+            
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            currentScale = Math.max(0.5, Math.min(5, currentScale * delta));
+            
+            canvas.style.transform = `scale(${currentScale})`;
+        });
+        
+        function connectWallet() {
+            try {
+                const { solana } = window;
+                if (!solana || !solana.isPhantom) {
+                    alert('Phantom wallet not installed!');
                     return;
                 }
                 
-                updateStatus('Creating transaction...');
-                placePixelBtn.disabled = true;
+                updateStatus('Connecting to wallet...');
+                
+                solana.connect()
+                    .then(response => {
+                        walletAddress = response.publicKey.toString();
+                        walletAddressSpan.textContent = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
+                        connectWalletBtn.textContent = 'Connected';
+                        connectWalletBtn.disabled = true;
+                        connectedIndicator.style.display = 'inline-block';
+                        placePixelBtn.disabled = false;
+                        updateStatus('Wallet connected!');
+                        
+                        checkBalance();
+                    })
+                    .catch(error => {
+                        updateStatus(`Error: ${error.message}`);
+                    });
+            } catch (error) {
+                updateStatus(`Error: ${error.message}`);
+            }
+        }
+        
+        async function checkBalance() {
+            if (!walletAddress) return;
+            
+            balanceSpan.textContent = 'Loading...';
+            try {
+                const response = await fetch(`${API_URL}/balance/${walletAddress}`);
+                const data = await response.json();
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                balanceSpan.textContent = formatBalance(data.formatted);
+            } catch (error) {
+                console.error('Balance check error:', error);
+                balanceSpan.textContent = '0';
+            }
+        }
+        
+        async function getAssociatedTokenAddress(mint, owner) {
+            const [address] = await solanaWeb3.PublicKey.findProgramAddress(
+                [
+                    owner.toBuffer(),
+                    TOKEN_PROGRAM_ID.toBuffer(),
+                    mint.toBuffer(),
+                ],
+                ASSOCIATED_TOKEN_PROGRAM_ID
+            );
+            return address;
+        }
+        
+        function createTokenTransferInstruction(fromTokenAccount, toTokenAccount, owner, amount) {
+            const data = new Uint8Array(9);
+            data[0] = 3; // Transfer instruction
+            const view = new DataView(data.buffer);
+            view.setBigUint64(1, BigInt(amount), true);
+            
+            return new solanaWeb3.TransactionInstruction({
+                keys: [
+                    { pubkey: fromTokenAccount, isSigner: false, isWritable: true },
+                    { pubkey: toTokenAccount, isSigner: false, isWritable: true },
+                    { pubkey: owner, isSigner: true, isWritable: false },
+                ],
+                programId: TOKEN_PROGRAM_ID,
+                data
+            });
+        }
+        
+        function createAssociatedTokenAccountInstruction(payer, associatedToken, owner, mint) {
+            const keys = [
+                { pubkey: payer, isSigner: true, isWritable: true },
+                { pubkey: associatedToken, isSigner: false, isWritable: true },
+                { pubkey: owner, isSigner: false, isWritable: false },
+                { pubkey: mint, isSigner: false, isWritable: false },
+                { pubkey: solanaWeb3.SystemProgram.programId, isSigner: false, isWritable: false },
+                { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+                { pubkey: solanaWeb3.SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
+            ];
+            
+            return new solanaWeb3.TransactionInstruction({
+                keys,
+                programId: ASSOCIATED_TOKEN_PROGRAM_ID,
+                data: new Uint8Array(0)
+            });
+        }
+        
+        async function placePixel() {
+            if (!selectedPixel || !walletAddress) {
+                updateStatus('Please select a pixel and connect wallet');
+                return;
+            }
+            
+            updateStatus('Creating transaction...');
+            placePixelBtn.disabled = true;
+            
+            try {
+                const color = colorPicker.value;
+                const { solana } = window;
+                
+                const latestBlockhash = await connection.getLatestBlockhash();
+                
+                const mintPubkey = new solanaWeb3.PublicKey(SPLACE_TOKEN);
+                const ownerPubkey = new solanaWeb3.PublicKey(walletAddress);
+                const burnPubkey = new solanaWeb3.PublicKey(BURN_ADDRESS);
+                
+                const ownerTokenAccount = await getAssociatedTokenAddress(mintPubkey, ownerPubkey);
+                const burnTokenAccount = await getAssociatedTokenAddress(mintPubkey, burnPubkey);
+                
+                const transaction = new solanaWeb3.Transaction();
                 
                 try {
-                    const color = colorPicker.value;
-                    const { solana } = window;
-                    
-                    const latestBlockhash = await connection.getLatestBlockhash();
-                    
-                    const mintPubkey = new solanaWeb3.PublicKey(SPLACE_TOKEN);
-                    const ownerPubkey = new solanaWeb3.PublicKey(walletAddress);
-                    const burnPubkey = new solanaWeb3.PublicKey(BURN_ADDRESS);
-                    
-                    const ownerTokenAccount = await getAssociatedTokenAddress(mintPubkey, ownerPubkey);
-                    const burnTokenAccount = await getAssociatedTokenAddress(mintPubkey, burnPubkey);
-                    
-                    const transaction = new solanaWeb3.Transaction();
-                    
-                    try {
-                        const burnAccountInfo = await connection.getAccountInfo(burnTokenAccount);
-                        if (!burnAccountInfo) {
-                            const createAccountInstruction = createAssociatedTokenAccountInstruction(
-                                ownerPubkey,
-                                burnTokenAccount,
-                                burnPubkey,
-                                mintPubkey
-                            );
-                            transaction.add(createAccountInstruction);
-                        }
-                    } catch (error) {
-                        console.log('Error checking burn account existence:', error);
-                    }
-                    
-                    const amount = COST_PER_PIXEL * Math.pow(10, TOKEN_DECIMALS);
-                    const transferInstruction = createTokenTransferInstruction(
-                        ownerTokenAccount,
-                        burnTokenAccount,
-                        ownerPubkey,
-                        amount
-                    );
-                    
-                    transaction.add(transferInstruction);
-                    
-                    transaction.recentBlockhash = latestBlockhash.blockhash;
-                    transaction.feePayer = ownerPubkey;
-                    
-                    updateStatus('Waiting for wallet approval...');
-                    
-                    const { signature } = await solana.signAndSendTransaction(transaction);
-                    console.log('Transaction signature:', signature);
-                    
-                    updateStatus('Transaction sent, waiting for confirmation...');
-                    
-                    // Wait for transaction confirmation
-                    try {
-                        const confirmResult = await connection.confirmTransaction(signature, 'confirmed');
-                        console.log('Confirmation result:', confirmResult);
-                        updateStatus('Transaction confirmed! Placing pixel...');
-                        
-                        // 1. Update locally first for immediate feedback
-                        pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
-                        updatePixel(selectedPixel.x, selectedPixel.y, color);
-                        
-                        // 2. Send update via WebSocket for real-time sync
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({
-                                type: 'pixel_update',
-                                x: selectedPixel.x,
-                                y: selectedPixel.y,
-                                color: color,
-                                walletAddress: walletAddress,
-                                signature: signature,
-                                timestamp: Date.now()
-                            }));
-                            console.log('Sent pixel update via WebSocket');
-                        } else {
-                            console.warn('WebSocket not connected, falling back to HTTP');
-                        }
-                        
-                        // 3. Also send via HTTP for reliability
-                        fetch(`${API_URL}/place-pixel`, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                x: selectedPixel.x,
-                                y: selectedPixel.y,
-                                color: color,
-                                walletAddress: walletAddress,
-                                signature: signature,
-                                burnAddress: BURN_ADDRESS,
-                                tokenMint: SPLACE_TOKEN,
-                                tokenAmount: amount.toString(),
-                                timestamp: Date.now()
-                            })
-                        })
-                        .then(response => response.json())
-                        .then(data => {
-                            if (data.success) {
-                                console.log('Pixel confirmed by HTTP endpoint');
-                            } else {
-                                console.warn('HTTP endpoint rejected pixel:', data.error);
-                            }
-                        })
-                        .catch(error => {
-                            console.error('HTTP error:', error);
-                        });
-                        
-                        updateStatus('Pixel placed successfully!');
-                        totalBurned += COST_PER_PIXEL;
-                        updateBurnedDisplay();
-                        checkBalance();
-                    } catch (confirmError) {
-                        console.error('Confirmation error:', confirmError);
-                        updateStatus('Transaction may have succeeded. Check your balance.');
+                    const burnAccountInfo = await connection.getAccountInfo(burnTokenAccount);
+                    if (!burnAccountInfo) {
+                        const createAccountInstruction = createAssociatedTokenAccountInstruction(
+                            ownerPubkey,
+                            burnTokenAccount,
+                            burnPubkey,
+                            mintPubkey
+                        );
+                        transaction.add(createAccountInstruction);
                     }
                 } catch (error) {
-                    console.error('Transaction error:', error);
-                    updateStatus(`Error: ${error.message}`);
-                } finally {
-                    placePixelBtn.disabled = false;
+                    console.log('Error checking burn account existence:', error);
                 }
-            }
-            
-            // Initialize on page load
-            function initApp() {
-                console.log('Initializing SolPlace app...');
                 
-                // Initialize canvas first
-                initCanvas();
+                const amount = COST_PER_PIXEL * Math.pow(10, TOKEN_DECIMALS);
+                const transferInstruction = createTokenTransferInstruction(
+                    ownerTokenAccount,
+                    burnTokenAccount,
+                    ownerPubkey,
+                    amount
+                );
                 
-                // Attach all event listeners explicitly
-                attachEventListeners();
+                transaction.add(transferInstruction);
                 
-                // Connect to blockchain and services
-                initConnection().then(() => {
-                    console.log('RPC connected successfully');
-                    initWebSocket(); // Connect to WebSocket for real-time updates
-                    updateStatus('Connect your wallet to start');
-                }).catch(error => {
-                    console.error('RPC connection failed:', error);
-                    updateStatus('Failed to connect to RPC. Please check your connection.');
-                });
-            }
-            
-            // Attach all event listeners
-            function attachEventListeners() {
-                console.log('Attaching event listeners...');
+                transaction.recentBlockhash = latestBlockhash.blockhash;
+                transaction.feePayer = ownerPubkey;
                 
-                // Button event listeners
-                connectWalletBtn.addEventListener('click', connectWallet);
-                placePixelBtn.addEventListener('click', placePixel);
-                howItWorksBtn.addEventListener('click', () => {
-                    modal.style.display = 'block';
-                });
-                closeBtn.addEventListener('click', () => {
-                    modal.style.display = 'none';
-                });
-                contractAddressBtn.addEventListener('click', () => {
-                    navigator.clipboard.writeText(SPLACE_TOKEN).then(() => {
-                        copyNotification.classList.add('show');
-                        setTimeout(() => {
-                            copyNotification.classList.remove('show');
-                        }, 2000);
+                updateStatus('Waiting for wallet approval...');
+                
+                const { signature } = await solana.signAndSendTransaction(transaction);
+                console.log('Transaction signature:', signature);
+                
+                updateStatus('Transaction sent, waiting for confirmation...');
+                
+                // Wait for transaction confirmation
+                try {
+                    const confirmResult = await connection.confirmTransaction(signature, 'confirmed');
+                    console.log('Transaction confirmed');
+                    updateStatus('Transaction confirmed! Placing pixel...');
+                    
+                    // 1. Update locally first for immediate feedback
+                    pixelState[`${selectedPixel.x},${selectedPixel.y}`] = color;
+                    updatePixel(selectedPixel.x, selectedPixel.y, color);
+                    
+                    // 2. Send update via WebSocket for real-time sync
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({
+                            type: 'pixel_update',
+                            x: selectedPixel.x,
+                            y: selectedPixel.y,
+                            color: color,
+                            walletAddress: walletAddress,
+                            signature: signature,
+                            timestamp: Date.now()
+                        }));
+                    }
+                    
+                    // 3. Also send via HTTP for reliability
+                    fetch(`${API_URL}/place-pixel`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            x: selectedPixel.x,
+                            y: selectedPixel.y,
+                            color: color,
+                            walletAddress: walletAddress,
+                            signature: signature,
+                            burnAddress: BURN_ADDRESS,
+                            tokenMint: SPLACE_TOKEN,
+                            tokenAmount: amount.toString(),
+                            timestamp: Date.now()
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            console.log('Pixel placement confirmed by server');
+                        } else {
+                            console.log('Server error:', data.error);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('HTTP error:', error);
                     });
-                });
-                
-                // Canvas click event
-                canvas.addEventListener('click', (e) => {
-                    const rect = canvas.getBoundingClientRect();
-                    const x = Math.floor((e.clientX - rect.left) / currentScale / 5);
-                    const y = Math.floor((e.clientY - rect.top) / currentScale / 5);
                     
-                    if (x >= 0 && x < 100 && y >= 0 && y < 100) {
-                        selectedPixel = { x, y };
-                        updateCanvasState(pixelState);
-                        updateStatus(`Selected pixel: (${x}, ${y})`);
-                    }
-                });
-                
-                // Canvas container zoom event
-                document.getElementById('canvas-container').addEventListener('wheel', (e) => {
-                    e.preventDefault();
-                    
-                    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-                    currentScale = Math.max(0.5, Math.min(5, currentScale * delta));
-                    
-                    canvas.style.transform = `scale(${currentScale})`;
-                });
-                
-                // Global click handler for modal
-                window.addEventListener('click', (event) => {
-                    if (event.target == modal) {
-                        modal.style.display = 'none';
-                    }
-                });
-                
-                console.log('All event listeners attached');
+                    updateStatus('Pixel placed successfully!');
+                    totalBurned += COST_PER_PIXEL;
+                    updateBurnedDisplay();
+                    checkBalance();
+                } catch (confirmError) {
+                    console.error('Confirmation error:', confirmError);
+                    updateStatus('Transaction may have succeeded. Check your balance.');
+                }
+            } catch (error) {
+                console.error('Transaction error:', error);
+                updateStatus(`Error: ${error.message}`);
+            } finally {
+                placePixelBtn.disabled = false;
             }
-            
-            // Start the app with a delay to ensure DOM is loaded
-            document.addEventListener('DOMContentLoaded', () => {
-                console.log('DOM fully loaded');
-                setTimeout(initApp, 500);
+        }
+        
+        function showHowItWorks() {
+            modal.style.display = 'block';
+        }
+        
+        function closeModal() {
+            modal.style.display = 'none';
+        }
+        
+        function copyContractAddress() {
+            navigator.clipboard.writeText(SPLACE_TOKEN).then(() => {
+                copyNotification.classList.add('show');
+                setTimeout(() => {
+                    copyNotification.classList.remove('show');
+                }, 2000);
             });
-            
-            // Fallback if DOMContentLoaded already fired
-            if (document.readyState === 'complete' || document.readyState === 'interactive') {
-                console.log('DOM already loaded, starting app...');
-                setTimeout(initApp, 500);
-            }
-            
-            // Event listeners
-            connectWalletBtn.onclick = connectWallet;
-            placePixelBtn.onclick = placePixel;
-            
-            howItWorksBtn.onclick = () => {
-                modal.style.display = 'block';
-            }
-            
-            closeBtn.onclick = () => {
+        }
+        
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            if (event.target == modal) {
                 modal.style.display = 'none';
             }
-            
-            window.onclick = (event) => {
-                if (event.target == modal) {
-                    modal.style.display = 'none';
-                }
-            }
-            
-            canvas.addEventListener('click', (e) => {
-                const rect = canvas.getBoundingClientRect();
-                const x = Math.floor((e.clientX - rect.left) / currentScale / 5);
-                const y = Math.floor((e.clientY - rect.top) / currentScale / 5);
-                
-                if (x >= 0 && x < 100 && y >= 0 && y < 100) {
-                    selectedPixel = { x, y };
-                    updateCanvasState(pixelState);
-                    updateStatus(`Selected pixel: (${x}, ${y})`);
-                }
-            });
-            
-            document.getElementById('canvas-container').addEventListener('wheel', (e) => {
-                e.preventDefault();
-                
-                const delta = e.deltaY > 0 ? 0.9 : 1.1;
-                currentScale = Math.max(0.5, Math.min(5, currentScale * delta));
-                
-                canvas.style.transform = `scale(${currentScale})`;
-            });
-            
-            contractAddressBtn.onclick = () => {
-                navigator.clipboard.writeText(SPLACE_TOKEN).then(() => {
-                    copyNotification.classList.add('show');
-                    setTimeout(() => {
-                        copyNotification.classList.remove('show');
-                    }, 2000);
-                });
-            }
-            
-            // Initialize
-            initConnection().then(() => {
-                initCanvas();
+        };
+        
+        // Initialize the app
+        initCanvas();
+        initConnection().then(success => {
+            if (success) {
+                console.log('RPC connected');
                 initWebSocket();
                 updateStatus('Connect your wallet to start');
-            }).catch(error => {
-                updateStatus('Failed to connect to RPC. Please check your configuration.');
-                console.error('RPC connection error:', error);
-            });
-        }, 500); // Wait for scripts to load
+            } else {
+                updateStatus('Error connecting to Solana. Please refresh.');
+            }
+        });
     </script>
 </body>
 </html>
