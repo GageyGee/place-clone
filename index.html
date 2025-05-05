@@ -3,14 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Place Clone - Devnet</title>
+    <title>SolPlace - Pixel Art on Solana</title>
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body {
+        * {
             margin: 0;
-            font-family: Arial, sans-serif;
-            background-color: #1a1a1a;
-            color: white;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
+            color: #ffffff;
+            height: 100vh;
             overflow: hidden;
         }
         
@@ -25,95 +32,171 @@
             justify-content: center;
             align-items: center;
             overflow: auto;
-            background-color: #000;
+            background: #000;
+            position: relative;
         }
         
         #canvas {
             cursor: crosshair;
             image-rendering: pixelated;
-            background-color: white;
-            border: 3px solid #444;
+            background-color: #111;
+            border: 2px solid #333;
+            border-radius: 8px;
+            transition: transform 0.1s ease;
         }
         
         #sidebar {
-            width: 350px;
-            background-color: #282828;
-            padding: 20px;
+            width: 380px;
+            background: rgba(20, 20, 20, 0.95);
+            border-left: 1px solid #333;
+            padding: 32px;
             display: flex;
             flex-direction: column;
-            gap: 20px;
+            gap: 24px;
+            backdrop-filter: blur(10px);
+        }
+        
+        .logo {
+            font-size: 32px;
+            font-weight: 700;
+            background: linear-gradient(45deg, #00FFA3, #03E1FF, #DC1FFF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }
+        
+        .card {
+            background: rgba(30, 30, 30, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            backdrop-filter: blur(5px);
+        }
+        
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #00FFA3;
         }
         
         button {
-            padding: 15px;
-            background-color: #4CAF50;
+            padding: 14px 24px;
+            background: linear-gradient(45deg, #00FFA3, #03E1FF);
             border: none;
-            border-radius: 5px;
-            color: white;
-            font-size: 16px;
+            border-radius: 8px;
+            color: #000;
+            font-size: 15px;
+            font-weight: 600;
             cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 255, 163, 0.3);
         }
         
         button:disabled {
-            background-color: #666;
+            background: rgba(100, 100, 100, 0.5);
+            transform: none;
+            box-shadow: none;
             cursor: not-allowed;
+            color: #666;
         }
         
-        #status-message {
-            padding: 10px;
-            border-radius: 5px;
-            background-color: #333;
-            min-height: 20px;
-            text-align: center;
-        }
-        
-        .color-section {
-            border: 2px solid #4CAF50;
-            border-radius: 5px;
-            padding: 15px;
-            background-color: #333;
-        }
-        
-        .color-section h3 {
-            margin: 0 0 10px 0;
-            color: #4CAF50;
+        #wallet-info {
+            font-size: 14px;
+            color: #888;
+            font-family: monospace;
         }
         
         #color-picker {
             width: 100%;
-            height: 60px;
-            padding: 5px;
-            border: 2px solid #555;
-            border-radius: 5px;
-            background-color: #555;
-        }
-        
-        .warning {
-            background-color: #663300;
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 10px;
-        }
-        
-        .info {
-            background-color: #004466;
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 10px;
-        }
-        
-        #zoom-controls {
-            display: flex;
-            gap: 10px;
-        }
-        
-        .zoom-button {
-            padding: 10px 20px;
-            background-color: #555;
-            border: none;
-            border-radius: 5px;
-            color: white;
+            height: 48px;
+            padding: 0;
+            border: 2px solid #00FFA3;
+            border-radius: 8px;
+            background-color: transparent;
             cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        #color-picker:hover {
+            box-shadow: 0 0 12px rgba(0, 255, 163, 0.3);
+        }
+        
+        #status-message {
+            padding: 12px;
+            border-radius: 8px;
+            background: rgba(40, 40, 40, 0.8);
+            text-align: center;
+            font-size: 14px;
+            color: #888;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .gradient-text {
+            background: linear-gradient(45deg, #00FFA3, #DC1FFF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 600;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        
+        .stat-card {
+            background: rgba(40, 40, 40, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #00FFA3;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .connected-indicator {
+            width: 8px;
+            height: 8px;
+            background: #00FFA3;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #111;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #444;
         }
     </style>
 </head>
@@ -123,34 +206,39 @@
             <canvas id="canvas" width="500" height="500"></canvas>
         </div>
         <div id="sidebar">
-            <h2>Place Clone - Devnet</h2>
-            
-            <div class="warning">
-                ⚠️ DEVNET version - uses test SOL, not real money
+            <div>
+                <h1 class="logo">SolPlace</h1>
+                <p style="color: #666; font-size: 14px;">Collaborative pixel art on Solana</p>
             </div>
             
-            <button id="connect-wallet">Connect Phantom Wallet</button>
-            <div>Wallet: <span id="wallet-address">Not connected</span></div>
-            
-            <div class="info">
-                💡 Need devnet SOL? Use the faucet in your Phantom wallet
+            <div class="card">
+                <div class="card-title">Wallet Connection</div>
+                <button id="connect-wallet">Connect Phantom</button>
+                <p id="wallet-info" style="margin-top: 12px;">
+                    <span class="connected-indicator" style="display: none;"></span>
+                    <span id="wallet-address">Not connected</span>
+                </p>
             </div>
             
-            <div class="color-section">
-                <h3>🎨 Select Your Color</h3>
+            <div class="card">
+                <div class="card-title">Color Selection</div>
                 <input type="color" id="color-picker" value="#ff0000">
-                <p style="margin: 5px 0; color: #4CAF50;">Click here to pick a color ↑</p>
             </div>
             
-            <div>Cost per pixel: 0.01 Devnet SOL</div>
-            <div id="balance">SOL Balance: 0 SOL</div>
+            <div class="stats">
+                <div class="stat-card">
+                    <div class="stat-value" id="balance">0.000</div>
+                    <div class="stat-label">SOL Balance</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">0.01</div>
+                    <div class="stat-label">Cost per Pixel</div>
+                </div>
+            </div>
+            
             <button id="place-pixel" disabled>Place Pixel</button>
-            <div id="status-message">Connect your wallet to start</div>
             
-            <div id="zoom-controls">
-                <button class="zoom-button" onclick="zoom(0.8)">Zoom Out</button>
-                <button class="zoom-button" onclick="zoom(1.2)">Zoom In</button>
-            </div>
+            <div id="status-message">Connect your wallet to start</div>
         </div>
     </div>
 
@@ -171,7 +259,8 @@
         const placePixelBtn = document.getElementById('place-pixel');
         const statusMessage = document.getElementById('status-message');
         const walletAddressSpan = document.getElementById('wallet-address');
-        const balanceDiv = document.getElementById('balance');
+        const balanceSpan = document.getElementById('balance');
+        const connectedIndicator = document.querySelector('.connected-indicator');
         
         // State
         let selectedPixel = null;
@@ -184,22 +273,18 @@
         // Initialize Solana connection to devnet
         function initSolana() {
             connection = new solanaWeb3.Connection('https://api.devnet.solana.com');
-            console.log('Connected to Solana devnet');
         }
         
         // Initialize WebSocket connection
         function initWebSocket() {
-            console.log('Connecting to WebSocket at:', WS_URL);
             ws = new WebSocket(WS_URL);
             
             ws.onopen = () => {
-                console.log('WebSocket connected');
                 updateStatus('Connected to server');
             };
             
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
-                console.log('WebSocket message:', data);
                 
                 if (data.type === 'canvas_state') {
                     pixelState = data.pixels || {};
@@ -211,25 +296,20 @@
             };
             
             ws.onclose = () => {
-                console.log('WebSocket disconnected');
                 updateStatus('Disconnected from server');
                 setTimeout(initWebSocket, 5000);
-            };
-            
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
             };
         }
         
         // Update canvas with pixel data
         function updateCanvasState(pixels) {
-            ctx.fillStyle = '#ffffff';
+            ctx.fillStyle = '#111111';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
             Object.entries(pixels).forEach(([key, color]) => {
                 const [x, y] = key.split(',').map(Number);
                 ctx.fillStyle = color;
-                ctx.fillRect(x * 5, y * 5, 5, 5); // Scale pixels to 5x5
+                ctx.fillRect(x * 5, y * 5, 5, 5);
             });
             
             if (selectedPixel) {
@@ -245,7 +325,7 @@
         
         // Highlight selected pixel
         function highlightPixel(x, y) {
-            ctx.strokeStyle = '#00ff00';
+            ctx.strokeStyle = '#00FFA3';
             ctx.lineWidth = 2;
             ctx.strokeRect(x * 5, y * 5, 5, 5);
         }
@@ -253,7 +333,6 @@
         // Connect to Phantom wallet
         async function connectWallet() {
             try {
-                console.log('Attempting to connect to Phantom wallet...');
                 const { solana } = window;
                 if (!solana || !solana.isPhantom) {
                     throw new Error('Phantom wallet not installed!');
@@ -261,16 +340,15 @@
                 
                 const response = await solana.connect();
                 walletAddress = response.publicKey.toString();
-                console.log('Connected to wallet:', walletAddress);
                 walletAddressSpan.textContent = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
                 connectWalletBtn.textContent = 'Connected';
                 connectWalletBtn.disabled = true;
+                connectedIndicator.style.display = 'inline-block';
                 placePixelBtn.disabled = false;
                 updateStatus('Wallet connected!');
                 
                 checkBalance();
             } catch (error) {
-                console.error('Wallet connection error:', error);
                 updateStatus(`Error: ${error.message}`);
             }
         }
@@ -280,12 +358,10 @@
             try {
                 const publicKey = new solanaWeb3.PublicKey(walletAddress);
                 const balance = await connection.getBalance(publicKey);
-                const solBalance = balance / 1e9; // Convert lamports to SOL
-                balanceDiv.textContent = `SOL Balance: ${solBalance.toFixed(4)} SOL`;
-                console.log('Balance checked:', solBalance, 'SOL');
+                const solBalance = balance / 1e9;
+                balanceSpan.textContent = solBalance.toFixed(4);
             } catch (error) {
-                console.error('Balance check error:', error);
-                balanceDiv.textContent = 'SOL Balance: Error loading';
+                balanceSpan.textContent = 'Error';
             }
         }
         
@@ -301,8 +377,6 @@
             
             try {
                 const color = colorPicker.value;
-                console.log('Placing pixel:', { x: selectedPixel.x, y: selectedPixel.y, color });
-                console.log('Using treasury address:', TREASURY_ADDRESS);
                 
                 // Create transaction
                 const transaction = new solanaWeb3.Transaction().add(
@@ -318,18 +392,13 @@
                 transaction.recentBlockhash = blockhash;
                 transaction.feePayer = new solanaWeb3.PublicKey(walletAddress);
                 
-                console.log('Signing transaction...');
                 // Sign and send transaction
                 const { signature } = await window.solana.signAndSendTransaction(transaction);
-                console.log('Transaction signature:', signature);
                 
                 // Confirm transaction
-                updateStatus('Confirming transaction...');
                 await connection.confirmTransaction(signature);
-                console.log('Transaction confirmed');
                 
                 // Send pixel update to backend
-                console.log('Sending pixel update to backend...');
                 const response = await fetch(`${API_URL}/place-pixel`, {
                     method: 'POST',
                     headers: {
@@ -345,7 +414,6 @@
                 });
                 
                 const data = await response.json();
-                console.log('Backend response:', data);
                 
                 if (data.success) {
                     updateStatus(`Pixel placed at (${data.x}, ${data.y})!`);
@@ -354,7 +422,6 @@
                     throw new Error(data.error);
                 }
             } catch (error) {
-                console.error('Place pixel error:', error);
                 updateStatus(`Error: ${error.message}`);
             } finally {
                 placePixelBtn.disabled = false;
@@ -366,35 +433,36 @@
             statusMessage.textContent = message;
         }
         
-        // Zoom function
-        function zoom(factor) {
-            currentScale *= factor;
-            canvas.style.transform = `scale(${currentScale})`;
-            canvas.style.transformOrigin = 'top left';
-        }
-        
         // Event listeners
         connectWalletBtn.addEventListener('click', connectWallet);
         placePixelBtn.addEventListener('click', placePixel);
         
         canvas.addEventListener('click', (e) => {
             const rect = canvas.getBoundingClientRect();
-            const x = Math.floor((e.clientX - rect.left) / currentScale / 5); // Divide by 5 for pixel size
+            const x = Math.floor((e.clientX - rect.left) / currentScale / 5);
             const y = Math.floor((e.clientY - rect.top) / currentScale / 5);
             
-            if (x >= 0 && x < 100 && y >= 0 && y < 100) { // 100x100 pixel grid
+            if (x >= 0 && x < 100 && y >= 0 && y < 100) {
                 selectedPixel = { x, y };
                 updateCanvasState(pixelState);
                 updateStatus(`Selected pixel: (${x}, ${y})`);
-                console.log('Selected pixel:', selectedPixel);
             }
         });
         
+        // Scroll zoom functionality
+        document.getElementById('canvas-container').addEventListener('wheel', (e) => {
+            e.preventDefault();
+            
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            currentScale = Math.max(0.5, Math.min(5, currentScale * delta));
+            
+            canvas.style.transform = `scale(${currentScale})`;
+        });
+        
         // Initialize
-        console.log('Initializing application...');
         initSolana();
         initWebSocket();
-        updateStatus('Click on any pixel to select it');
+        updateStatus('Connect your wallet to start');
     </script>
 </body>
 </html>
