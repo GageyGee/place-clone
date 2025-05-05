@@ -472,10 +472,14 @@
     </div>
 
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
+    <script src="https://browserify.fyi/node/buffer"></script>
     
     <script>
-        // Wait for DOM content loaded before initializing
         document.addEventListener('DOMContentLoaded', () => {
+            // Load Buffer library
+            const Buffer = window.buffer.Buffer;
+            window.Buffer = Buffer;
+            
             // Configuration
             const API_URL = 'https://place-clone-backend.onrender.com';
             const WS_URL = 'wss://place-clone-backend.onrender.com';
@@ -523,13 +527,178 @@
             let pixelState = {};
             let totalBurned = 0;
             
-            // Initialize canvas
+            // Format number to K/M/B format for balances
+            function formatBalance(num) {
+                const actualValue = num / Math.pow(10, TOKEN_DECIMALS);
+                
+                if (actualValue < 1000) return actualValue.toString();
+                if (actualValue < 1000000) {
+                    const k = actualValue / 1000;
+                    return k % 1 === 0 ? k + 'K' : k.toFixed(1) + 'K';
+                }
+                if (actualValue < 1000000000) {
+                    const m = actualValue / 1000000;
+                    return m % 1 === 0 ? m + 'M' : m.toFixed(1) + 'M';
+                }
+                const b = actualValue / 1000000000;
+                return b % 1 === 0 ? b + 'B' : b.toFixed(1) + 'B';
+            }
+            
+            // Format burn count (raw number with K/M/B suffix)
+            function formatBurnCount(num) {
+                if (num < 1000) return num.toString();
+                if (num < 1000000) {
+                    const k = num / 1000;
+                    return k % 1 === 0 ? k + 'K' : k.toFixed(1) + 'K';
+                }
+                if (num < 1000000000) {
+                    const m = num / 1000000;
+                    return m % 1 === 0 ? m + 'M' : m.toFixed(1) + 'M';
+                }
+                const b = num / 1000000000;
+                return b % 1 === 0 ? b + 'B' : b.toFixed(1) + 'B';
+            }
+            
+            // Initialize canvas with white background immediately
             function initCanvas() {
                 ctx.fillStyle = '#ffffff';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
             }
             
             initCanvas();
+            
+            // Update canvas with pixel data
+            function updateCanvasState(pixels, forceWhite = false) {
+                // Always maintain white background
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                Object.entries(pixels).forEach(([key, color]) => {
+                    if (color !== '#ffffff') {
+                        const [x, y] = key.split(',').map(Number);
+                        ctx.fillStyle = color;
+                        ctx.fillRect(x * 5, y * 5, 5, 5);
+                    }
+                });
+                
+                if (selectedPixel) {
+                    highlightPixel(selectedPixel.x, selectedPixel.y);
+                }
+            }
+            
+            // Update single pixel
+            function updatePixel(x, y, color) {
+                ctx.fillStyle = color;
+                ctx.fillRect(x * 5, y * 5, 5, 5);
+            }
+            
+            // Highlight selected pixel
+            function highlightPixel(x, y) {
+                ctx.strokeStyle = '#00FFA3';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x * 5, y * 5, 5, 5);
+            }
+            
+            // Function to manually calculate associated token address
+            async function getAssociatedTokenAddress(mint, owner) {
+                const [address] = await solanaWeb3.PublicKey.findProgramAddress(
+                    [
+                        owner.toBuffer(),
+                        TOKEN_PROGRAM_ID.toBuffer(),
+                        mint.toBuffer(),
+                    ],
+                    ASSOCIATED_TOKEN_PROGRAM_ID
+                );
+                return address;
+            }
+            
+            // Initialize Solana connection with retry logic
+            async function initSolana() {
+                for (let i = 0; i < RPC_ENDPOINTS.length; i++) {
+                    try {
+                        connection = new solanaWeb3.Connection(RPC_ENDPOINTS[i], 'confirmed');
+                        
+                        // Test the connection
+                        await connection.getVersion();
+                        console.log(`Connected to RPC: ${RPC_ENDPOINTS[i]}`);
+                        break;
+                    } catch (error) {
+                        console.log(`Failed to connect to ${RPC_ENDPOINTS[i]}, trying next...`);
+                        if (i === RPC_ENDPOINTS.length - 1) {
+                            throw new Error('All RPC endpoints failed');
+                        }
+                    }
+                }
+            }
+            
+            // Initialize WebSocket connection
+            function initWebSocket() {
+                ws = new WebSocket(WS_URL);
+                
+                ws.onopen = () => {
+                    updateStatus('Connected to server');
+                };
+                
+                ws.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'canvas_state') {
+                        pixelState = data.pixels || {};
+                        updateCanvasState(pixelState, true);
+                    } else if (data.type === 'pixel_update') {
+                        pixelState[`${data.x},${data.y}`] = data.color;
+                        updatePixel(data.x, data.y, data.color);
+                        totalBurned += COST_PER_PIXEL;
+                        updateBurnedDisplay();
+                    }
+                };
+                
+                ws.onclose = () => {
+                    updateStatus('Disconnected from server');
+                    setTimeout(initWebSocket, 5000);
+                };
+            }
+            
+            // Update burn display
+            function updateBurnedDisplay() {
+                burnedAmountSpan.textContent = formatBurnCount(totalBurned);
+            }
+            
+            // Create SPL token transfer instruction manually
+            function createTokenTransferInstruction(fromTokenAccount, toTokenAccount, owner, amount) {
+                const data = Buffer.alloc(9);
+                data.writeUInt8(3, 0); // Transfer instruction
+                data.writeBigUInt64LE(BigInt(amount), 1);
+                
+                return new solanaWeb3.TransactionInstruction({
+                    keys: [
+                        { pubkey: fromTokenAccount, isSigner: false, isWritable: true },
+                        { pubkey: toTokenAccount, isSigner: false, isWritable: true },
+                        { pubkey: owner, isSigner: true, isWritable: false },
+                    ],
+                    programId: TOKEN_PROGRAM_ID,
+                    data
+                });
+            }
+            
+            // Create associated token account instruction manually
+            function createAssociatedTokenAccountInstruction(payer, associatedToken, owner, mint) {
+                const keys = [
+                    { pubkey: payer, isSigner: true, isWritable: true },
+                    { pubkey: associatedToken, isSigner: false, isWritable: true },
+                    { pubkey: owner, isSigner: false, isWritable: false },
+                    { pubkey: mint, isSigner: false, isWritable: false },
+                    { pubkey: solanaWeb3.SystemProgram.programId, isSigner: false, isWritable: false },
+                    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+                    { pubkey: solanaWeb3.SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
+                ];
+                
+                return new solanaWeb3.TransactionInstruction({
+                    keys,
+                    programId: ASSOCIATED_TOKEN_PROGRAM_ID,
+                    data: Buffer.alloc(0)
+                });
+            }
             
             // Event listeners
             connectWalletBtn.addEventListener('click', connectWallet);
@@ -553,6 +722,7 @@
                 
                 if (x >= 0 && x < 100 && y >= 0 && y < 100) {
                     selectedPixel = { x, y };
+                    updateCanvasState(pixelState);
                     updateStatus(`Selected pixel: (${x}, ${y})`);
                 }
             });
@@ -617,18 +787,7 @@
                 }
             }
             
-            function formatBalance(num) {
-                const actualValue = num / Math.pow(10, TOKEN_DECIMALS);
-                
-                if (actualValue < 1000) return actualValue.toString();
-                if (actualValue < 1000000) {
-                    const k = actualValue / 1000;
-                    return k % 1 === 0 ? k + 'K' : k.toFixed(1) + 'K';
-                }
-                const m = actualValue / 1000000;
-                return m % 1 === 0 ? m + 'M' : m.toFixed(1) + 'M';
-            }
-            
+            // Place pixel with token burning
             async function placePixel() {
                 if (!selectedPixel || !walletAddress) {
                     updateStatus('Please select a pixel and connect wallet');
@@ -640,6 +799,60 @@
                 
                 try {
                     const color = colorPicker.value;
+                    const { solana } = window;
+                    
+                    // Get latest blockhash
+                    const latestBlockhash = await connection.getLatestBlockhash();
+                    
+                    // Convert public keys
+                    const mintPubkey = new solanaWeb3.PublicKey(SPLACE_TOKEN);
+                    const ownerPubkey = new solanaWeb3.PublicKey(walletAddress);
+                    const burnPubkey = new solanaWeb3.PublicKey(BURN_ADDRESS);
+                    
+                    // Get associated token accounts
+                    const ownerTokenAccount = await getAssociatedTokenAddress(mintPubkey, ownerPubkey);
+                    const burnTokenAccount = await getAssociatedTokenAddress(mintPubkey, burnPubkey);
+                    
+                    // Create transaction
+                    const transaction = new solanaWeb3.Transaction();
+                    
+                    // Check if burn token account exists, if not create it
+                    try {
+                        const burnAccountInfo = await connection.getAccountInfo(burnTokenAccount);
+                        if (!burnAccountInfo) {
+                            // Create associated token account for burn address
+                            const createAccountInstruction = createAssociatedTokenAccountInstruction(
+                                ownerPubkey,
+                                burnTokenAccount,
+                                burnPubkey,
+                                mintPubkey
+                            );
+                            transaction.add(createAccountInstruction);
+                        }
+                    } catch (error) {
+                        console.log('Error checking burn account existence:', error);
+                    }
+                    
+                    // Add token transfer instruction to burn tokens
+                    const amount = COST_PER_PIXEL * Math.pow(10, TOKEN_DECIMALS);
+                    const transferInstruction = createTokenTransferInstruction(
+                        ownerTokenAccount,
+                        burnTokenAccount,
+                        ownerPubkey,
+                        amount
+                    );
+                    
+                    transaction.add(transferInstruction);
+                    
+                    // Set recent blockhash and fee payer
+                    transaction.recentBlockhash = latestBlockhash.blockhash;
+                    transaction.feePayer = ownerPubkey;
+                    
+                    updateStatus('Waiting for wallet approval...');
+                    
+                    // Send the transaction through Phantom
+                    const { signature } = await solana.signAndSendTransaction(transaction);
+                    
                     updateStatus('Transaction confirmed, placing pixel...');
                     
                     // Send pixel update to backend
@@ -652,7 +865,7 @@
                             x: selectedPixel.x,
                             y: selectedPixel.y,
                             color: color,
-                            signature: 'demo-signature', // Demo mode
+                            signature: signature,
                             walletAddress: walletAddress
                         }),
                     });
@@ -661,6 +874,7 @@
                     
                     if (data.success) {
                         updateStatus(`Pixel placed at (${data.x}, ${data.y})!`);
+                        checkBalance();
                     } else {
                         throw new Error(data.error);
                     }
@@ -670,6 +884,15 @@
                     placePixelBtn.disabled = false;
                 }
             }
+            
+            // Initialize
+            initSolana().then(() => {
+                initWebSocket();
+                updateStatus('Connect your wallet to start');
+            }).catch(error => {
+                updateStatus('Failed to connect to RPC. Please check your configuration.');
+                console.error('RPC connection error:', error);
+            });
         });
     </script>
 </body>
