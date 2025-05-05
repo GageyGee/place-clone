@@ -14,9 +14,9 @@ app.use(express.json());
 
 // Constants
 const SPLACE_TOKEN = '38KWMyCbPurCgqqwx5JG4EouREtjwcCaDqvL9KNGsvDf';
-const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111'; // Solana burn address
+const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111';
 const COST_PER_PIXEL = 10000;
-const TOKEN_DECIMALS = 6; // Assuming 6 decimals for $SPLACE token
+const TOKEN_DECIMALS = 6;
 const CANVAS_SIZE = 100; // 100x100 pixel grid
 
 // Initialize in-memory pixel storage
@@ -97,35 +97,39 @@ async function verifyTransaction(signature, expectedAmount) {
             return false;
         }
         
-        console.log('Transaction found:', transaction);
+        console.log('Transaction found, details:', transaction);
         
-        // Parse the transaction to verify:
-        // 1. It's a token transfer
-        // 2. The transfer is to the burn address
-        // 3. The amount is correct
-        
-        const instructions = transaction.transaction.message.compiledInstructions;
-        const accountKeys = transaction.transaction.message.staticAccountKeys;
-        
-        // Look for token transfer instruction
-        let isValidTransfer = false;
-        
-        for (const instruction of instructions) {
-            // Check if this is a token program instruction
-            const programKey = accountKeys[instruction.programIdIndex].toBase58();
+        // Verify this transaction includes a token transfer to the burn address
+        if (transaction.meta && transaction.meta.preTokenBalances && transaction.meta.postTokenBalances) {
+            // Check token balance changes
+            const preBalance = transaction.meta.preTokenBalances || [];
+            const postBalance = transaction.meta.postTokenBalances || [];
             
-            if (programKey === TOKEN_PROGRAM_ID.toBase58()) {
-                // This is a token program instruction
-                // In a production environment, you'd want to properly parse the instruction data
-                // to verify it's a transfer to the burn address with the correct amount
-                
-                // For now, we accept any transaction that includes a token instruction
-                isValidTransfer = true;
-                break;
+            // Find changes related to our token
+            const tokenChanges = postBalance.filter(post => {
+                const pre = preBalance.find(p => p.accountIndex === post.accountIndex);
+                return pre && pre.mint === SPLACE_TOKEN && post.mint === SPLACE_TOKEN;
+            });
+            
+            console.log('Token changes found:', tokenChanges);
+            
+            // Look for transfer to burn address
+            for (const change of tokenChanges) {
+                if (change.owner === BURN_ADDRESS) {
+                    const transferred = change.uiTokenAmount.amount - 
+                        (preBalance.find(p => p.accountIndex === change.accountIndex)?.uiTokenAmount.amount || 0);
+                    
+                    console.log('Tokens transferred to burn address:', transferred);
+                    
+                    if (transferred >= expectedAmount * Math.pow(10, TOKEN_DECIMALS)) {
+                        return true;
+                    }
+                }
             }
         }
         
-        return isValidTransfer;
+        console.log('Transaction verification failed - no valid token burn found');
+        return false;
     } catch (error) {
         console.error('Transaction verification error:', error);
         return false;
@@ -155,7 +159,7 @@ app.post('/place-pixel', async (req, res) => {
         
         if (!isValid) {
             console.log('Transaction verification failed');
-            return res.status(400).json({ error: 'Invalid transaction' });
+            return res.status(400).json({ error: 'Invalid transaction or insufficient token burn' });
         }
         
         // Update pixel
@@ -201,6 +205,7 @@ server.listen(PORT, () => {
     console.log(`WebSocket server is ready`);
     console.log(`Using token: ${SPLACE_TOKEN}`);
     console.log(`Burning to: ${BURN_ADDRESS}`);
+    console.log(`Cost per pixel: ${COST_PER_PIXEL} tokens`);
 });
 
 module.exports = app;
