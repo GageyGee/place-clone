@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Place Clone</title>
+    <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.js"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: white;
+            overflow: hidden;
+        }
+        
+        #container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        #canvas-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: auto;
+            background-color: #000;
+        }
+        
+        #canvas {
+            cursor: crosshair;
+            image-rendering: pixelated;
+            background-color: white;
+        }
+        
+        #sidebar {
+            width: 300px;
+            background-color: #282828;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        button {
+            padding: 15px;
+            background-color: #4CAF50;
+            border: none;
+            border-radius: 5px;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        
+        #status-message {
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #333;
+            min-height: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="canvas-container">
+            <canvas id="canvas" width="500" height="500"></canvas>
+        </div>
+        <div id="sidebar">
+            <h2>Place Clone</h2>
+            <button id="connect-wallet">Connect Phantom Wallet</button>
+            <div>Wallet: <span id="wallet-address">Not connected</span></div>
+            <input type="color" id="color-picker" value="#ffffff">
+            <div>Cost per pixel: 10,000 $PLACE</div>
+            <div id="balance">Token Balance: 0 $PLACE</div>
+            <button id="place-pixel" disabled>Place Pixel</button>
+            <div id="status-message">Connect your wallet to start</div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration - UPDATE THESE AFTER DEPLOYMENT
+        const API_URL = 'https://your-heroku-app.herokuapp.com'; // Update after deployment
+        const WS_URL = 'wss://your-heroku-app.herokuapp.com'; // Update after deployment
+        
+        // Constants
+        const PLACE_TOKEN_ADDRESS = 'EAJmFSndFCa429pQLKJyci3RyJcPDB5WoB1ENBovpump';
+        const TREASURY_ADDRESS = 'EVx4g9TLyQsH9pbvPYDe7tymsEpu7E6NfhfEE6bER96';
+        const COST_PER_PIXEL = 10000;
+        
+        // DOM elements
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const colorPicker = document.getElementById('color-picker');
+        const connectWalletBtn = document.getElementById('connect-wallet');
+        const placePixelBtn = document.getElementById('place-pixel');
+        const statusMessage = document.getElementById('status-message');
+        const walletAddressSpan = document.getElementById('wallet-address');
+        const balanceDiv = document.getElementById('balance');
+        
+        // State
+        let selectedPixel = null;
+        let walletAddress = null;
+        let ws = null;
+        
+        // Initialize WebSocket connection
+        function initWebSocket() {
+            ws = new WebSocket(WS_URL);
+            
+            ws.onopen = () => {
+                updateStatus('Connected to server');
+            };
+            
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'canvas_state') {
+                    updateCanvasState(data.pixels);
+                } else if (data.type === 'pixel_update') {
+                    updatePixel(data.x, data.y, data.color);
+                }
+            };
+            
+            ws.onclose = () => {
+                updateStatus('Disconnected from server');
+                setTimeout(initWebSocket, 5000); // Reconnect after 5 seconds
+            };
+        }
+        
+        // Update canvas with pixel data
+        function updateCanvasState(pixels) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            Object.entries(pixels).forEach(([key, color]) => {
+                const [x, y] = key.split(',').map(Number);
+                ctx.fillStyle = color;
+                ctx.fillRect(x, y, 1, 1);
+            });
+            
+            if (selectedPixel) {
+                highlightPixel(selectedPixel.x, selectedPixel.y);
+            }
+        }
+        
+        // Update single pixel
+        function updatePixel(x, y, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(x, y, 1, 1);
+        }
+        
+        // Highlight selected pixel
+        function highlightPixel(x, y) {
+            ctx.strokeStyle = '#ff0000';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x, y, 1, 1);
+        }
+        
+        // Connect to Phantom wallet
+        async function connectWallet() {
+            try {
+                const { solana } = window;
+                if (!solana || !solana.isPhantom) {
+                    throw new Error('Phantom wallet not installed!');
+                }
+                
+                const response = await solana.connect();
+                walletAddress = response.publicKey.toString();
+                walletAddressSpan.textContent = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
+                connectWalletBtn.textContent = 'Connected';
+                connectWalletBtn.disabled = true;
+                placePixelBtn.disabled = false;
+                updateStatus('Wallet connected!');
+                
+                checkBalance();
+            } catch (error) {
+                updateStatus(`Error: ${error.message}`);
+            }
+        }
+        
+        // Check token balance
+        async function checkBalance() {
+            try {
+                const response = await fetch(`${API_URL}/balance/${walletAddress}`);
+                const data = await response.json();
+                balanceDiv.textContent = `Token Balance: ${data.formatted} $PLACE`;
+            } catch (error) {
+                balanceDiv.textContent = 'Token Balance: Error loading';
+            }
+        }
+        
+        // Place pixel
+        async function placePixel() {
+            if (!selectedPixel || !walletAddress) {
+                updateStatus('Please select a pixel and connect wallet');
+                return;
+            }
+            
+            updateStatus('Processing transaction...');
+            placePixelBtn.disabled = true;
+            
+            try {
+                const color = colorPicker.value;
+                
+                // In a full implementation, you would:
+                // 1. Create and sign a Solana token transfer transaction
+                // 2. Send it to the network
+                // 3. Get the transaction signature
+                
+                // For demo purposes, we'll send a mock signature
+                const signature = 'mock-signature';
+                
+                const response = await fetch(`${API_URL}/place-pixel`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        x: selectedPixel.x,
+                        y: selectedPixel.y,
+                        color: color,
+                        signature: signature,
+                        walletAddress: walletAddress
+                    }),
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    updateStatus(`Pixel placed at (${data.x}, ${data.y})!`);
+                    checkBalance();
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (error) {
+                updateStatus(`Error: ${error.message}`);
+            } finally {
+                placePixelBtn.disabled = false;
+            }
+        }
+        
+        // Update status message
+        function updateStatus(message) {
+            statusMessage.textContent = message;
+        }
+        
+        // Event listeners
+        connectWalletBtn.addEventListener('click', connectWallet);
+        placePixelBtn.addEventListener('click', placePixel);
+        
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor(e.clientX - rect.left);
+            const y = Math.floor(e.clientY - rect.top);
+            
+            selectedPixel = { x, y };
+            
+            // Redraw canvas to show selection
+            fetch(`${API_URL}/pixels`)
+                .then(res => res.json())
+                .then(pixels => {
+                    updateCanvasState(pixels);
+                });
+            
+            updateStatus(`Selected pixel: (${x}, ${y})`);
+        });
+        
+        // Initialize
+        initWebSocket();
+    </script>
+</body>
+</html>
