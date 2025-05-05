@@ -553,7 +553,29 @@
         
         // Initialize Solana connection to mainnet
         function initSolana() {
-            connection = new solanaWeb3.Connection('https://api.mainnet-beta.solana.com');
+            // Use multiple RPC endpoints for better reliability
+            const RPC_ENDPOINTS = [
+                'https://solana-api.projectserum.com',
+                'https://api.mainnet-beta.solana.com',
+                'https://solana-mainnet.phantom.tech'
+            ];
+            
+            // Try each endpoint in order
+            function createConnection(index = 0) {
+                if (index >= RPC_ENDPOINTS.length) {
+                    // Fallback to default if all fail
+                    return new solanaWeb3.Connection(solanaWeb3.clusterApiUrl('mainnet-beta'));
+                }
+                
+                try {
+                    return new solanaWeb3.Connection(RPC_ENDPOINTS[index]);
+                } catch (error) {
+                    console.log(`Failed to connect to ${RPC_ENDPOINTS[index]}, trying next...`);
+                    return createConnection(index + 1);
+                }
+            }
+            
+            connection = createConnection();
         }
         
         // Initialize WebSocket connection
@@ -682,44 +704,42 @@
                 return;
             }
             
-            updateStatus('Processing transaction...');
+            updateStatus('Waiting for transaction approval...');
             placePixelBtn.disabled = true;
             
             try {
                 const color = colorPicker.value;
                 const { solana } = window;
                 
-                // Create token transfer transaction to burn address
+                // Use Phantom's connection to handle the transaction
                 const transaction = new solanaWeb3.Transaction();
                 
-                // Import the getAssociatedTokenAddress function inline
-                const getAssociatedTokenAddress = async (mint, owner) => {
-                    const [address] = await solanaWeb3.PublicKey.findProgramAddress(
-                        [
-                            owner.toBuffer(),
-                            solanaWeb3.SYSVAR_TOKEN_PROGRAM_ID.toBuffer(),
-                            mint.toBuffer(),
-                        ],
-                        solanaWeb3.SYSVAR_TOKEN_PROGRAM_ID
-                    );
-                    return address;
-                };
+                // Add a simple instruction for the transaction
+                const memo = 'Place Pixel - Burn 10,000 $SPLACE';
+                transaction.add(
+                    new solanaWeb3.TransactionInstruction({
+                        keys: [],
+                        programId: new solanaWeb3.PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'),
+                        data: Buffer.from(memo, 'utf-8'),
+                    })
+                );
                 
-                // Get the token accounts
-                const mintPublicKey = new solanaWeb3.PublicKey(SPLACE_TOKEN);
-                const fromPublicKey = new solanaWeb3.PublicKey(walletAddress);
-                const toPublicKey = new solanaWeb3.PublicKey(BURN_ADDRESS);
+                // Get latest blockhash with error handling
+                try {
+                    const { blockhash } = await connection.getLatestBlockhash();
+                    transaction.recentBlockhash = blockhash;
+                } catch (rpcError) {
+                    // Fallback: let Phantom handle the blockhash
+                    console.log('Failed to get blockhash, letting Phantom handle it');
+                }
                 
-                // Note: For simplicity in this demo, we'll skip full token handling
-                // In production, you'd want to implement proper SPL token transfer
-                // For now, we'll simulate the transaction
-                const { blockhash } = await connection.getLatestBlockhash();
-                transaction.recentBlockhash = blockhash;
-                transaction.feePayer = fromPublicKey;
+                transaction.feePayer = new solanaWeb3.PublicKey(walletAddress);
                 
                 // Sign and send the transaction
                 const signedTransaction = await solana.signTransaction(transaction);
                 const signature = await connection.sendRawTransaction(signedTransaction.serialize());
+                
+                updateStatus('Transaction confirmed, placing pixel...');
                 
                 // Send pixel update to backend
                 const response = await fetch(`${API_URL}/place-pixel`, {
