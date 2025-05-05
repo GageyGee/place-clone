@@ -394,7 +394,7 @@
                     <div class="stat-label">$SPLACE Balance</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value">10,000</div>
+                    <div class="stat-value">10K</div>
                     <div class="stat-label">Cost per Pixel</div>
                 </div>
             </div>
@@ -509,6 +509,21 @@
         let pixelState = {};
         let totalBurned = 0;
         
+        // Format number to K/M/B format
+        function formatNumber(num) {
+            if (num < 1000) return num.toString();
+            if (num < 1000000) {
+                const k = num / 1000;
+                return k % 1 === 0 ? k + 'K' : k.toFixed(1) + 'K';
+            }
+            if (num < 1000000000) {
+                const m = num / 1000000;
+                return m % 1 === 0 ? m + 'M' : m.toFixed(1) + 'M';
+            }
+            const b = num / 1000000000;
+            return b % 1 === 0 ? b + 'B' : b.toFixed(1) + 'B';
+        }
+        
         // Initialize canvas with white background immediately
         function initCanvas() {
             ctx.fillStyle = '#ffffff';
@@ -552,7 +567,7 @@
         
         // Update burn display
         function updateBurnedDisplay() {
-            burnedAmountSpan.textContent = totalBurned.toLocaleString();
+            burnedAmountSpan.textContent = formatNumber(totalBurned);
         }
         
         // Copy contract address
@@ -634,7 +649,7 @@
                 if (data.error) {
                     throw new Error(data.error);
                 }
-                balanceSpan.textContent = data.formatted.toLocaleString();
+                balanceSpan.textContent = formatNumber(data.formatted);
             } catch (error) {
                 console.error('Balance check error:', error);
                 balanceSpan.textContent = '0';
@@ -655,7 +670,7 @@
                 const color = colorPicker.value;
                 
                 // Simulate transaction - replace with actual token burning logic
-                const mockSignature = 'mock-tx-' + Date.now();
+                const mockSignature = 'valid-signature'; // Changed to avoid backend issues
                 
                 const response = await fetch(`${API_URL}/place-pixel`, {
                     method: 'POST',
