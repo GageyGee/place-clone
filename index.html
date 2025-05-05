@@ -160,7 +160,7 @@
         const WS_URL = 'wss://place-clone-backend.onrender.com';
         
         // Constants
-        const TREASURY_ADDRESS = 'YOUR_TREASURY_WALLET_ADDRESS'; // Devnet address
+        const TREASURY_ADDRESS = '7ReraTnzB5eoqpimZR6rZytz3D98SNYkMgQLUiRiVZXf';
         const COST_PER_PIXEL_LAMPORTS = 0.01 * 1e9; // 0.01 SOL in lamports
         
         // DOM elements
@@ -184,18 +184,22 @@
         // Initialize Solana connection to devnet
         function initSolana() {
             connection = new solanaWeb3.Connection('https://api.devnet.solana.com');
+            console.log('Connected to Solana devnet');
         }
         
         // Initialize WebSocket connection
         function initWebSocket() {
+            console.log('Connecting to WebSocket at:', WS_URL);
             ws = new WebSocket(WS_URL);
             
             ws.onopen = () => {
+                console.log('WebSocket connected');
                 updateStatus('Connected to server');
             };
             
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
+                console.log('WebSocket message:', data);
                 
                 if (data.type === 'canvas_state') {
                     pixelState = data.pixels || {};
@@ -207,8 +211,13 @@
             };
             
             ws.onclose = () => {
+                console.log('WebSocket disconnected');
                 updateStatus('Disconnected from server');
                 setTimeout(initWebSocket, 5000);
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
             };
         }
         
@@ -244,6 +253,7 @@
         // Connect to Phantom wallet
         async function connectWallet() {
             try {
+                console.log('Attempting to connect to Phantom wallet...');
                 const { solana } = window;
                 if (!solana || !solana.isPhantom) {
                     throw new Error('Phantom wallet not installed!');
@@ -251,6 +261,7 @@
                 
                 const response = await solana.connect();
                 walletAddress = response.publicKey.toString();
+                console.log('Connected to wallet:', walletAddress);
                 walletAddressSpan.textContent = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
                 connectWalletBtn.textContent = 'Connected';
                 connectWalletBtn.disabled = true;
@@ -259,6 +270,7 @@
                 
                 checkBalance();
             } catch (error) {
+                console.error('Wallet connection error:', error);
                 updateStatus(`Error: ${error.message}`);
             }
         }
@@ -270,7 +282,9 @@
                 const balance = await connection.getBalance(publicKey);
                 const solBalance = balance / 1e9; // Convert lamports to SOL
                 balanceDiv.textContent = `SOL Balance: ${solBalance.toFixed(4)} SOL`;
+                console.log('Balance checked:', solBalance, 'SOL');
             } catch (error) {
+                console.error('Balance check error:', error);
                 balanceDiv.textContent = 'SOL Balance: Error loading';
             }
         }
@@ -287,6 +301,8 @@
             
             try {
                 const color = colorPicker.value;
+                console.log('Placing pixel:', { x: selectedPixel.x, y: selectedPixel.y, color });
+                console.log('Using treasury address:', TREASURY_ADDRESS);
                 
                 // Create transaction
                 const transaction = new solanaWeb3.Transaction().add(
@@ -302,13 +318,18 @@
                 transaction.recentBlockhash = blockhash;
                 transaction.feePayer = new solanaWeb3.PublicKey(walletAddress);
                 
+                console.log('Signing transaction...');
                 // Sign and send transaction
                 const { signature } = await window.solana.signAndSendTransaction(transaction);
+                console.log('Transaction signature:', signature);
                 
                 // Confirm transaction
+                updateStatus('Confirming transaction...');
                 await connection.confirmTransaction(signature);
+                console.log('Transaction confirmed');
                 
                 // Send pixel update to backend
+                console.log('Sending pixel update to backend...');
                 const response = await fetch(`${API_URL}/place-pixel`, {
                     method: 'POST',
                     headers: {
@@ -324,6 +345,7 @@
                 });
                 
                 const data = await response.json();
+                console.log('Backend response:', data);
                 
                 if (data.success) {
                     updateStatus(`Pixel placed at (${data.x}, ${data.y})!`);
@@ -332,6 +354,7 @@
                     throw new Error(data.error);
                 }
             } catch (error) {
+                console.error('Place pixel error:', error);
                 updateStatus(`Error: ${error.message}`);
             } finally {
                 placePixelBtn.disabled = false;
@@ -363,10 +386,12 @@
                 selectedPixel = { x, y };
                 updateCanvasState(pixelState);
                 updateStatus(`Selected pixel: (${x}, ${y})`);
+                console.log('Selected pixel:', selectedPixel);
             }
         });
         
         // Initialize
+        console.log('Initializing application...');
         initSolana();
         initWebSocket();
         updateStatus('Click on any pixel to select it');
