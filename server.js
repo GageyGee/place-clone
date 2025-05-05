@@ -2,6 +2,8 @@ const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 const { Connection, clusterApiUrl, PublicKey } = require('@solana/web3.js');
 const { getAccount, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 
@@ -19,24 +21,112 @@ const COST_PER_PIXEL = 10000;
 const TOKEN_DECIMALS = 6;
 const CANVAS_SIZE = 100; // 100x100 pixel grid
 
-// Initialize in-memory pixel storage
-const pixelData = {};
+// Path for persistent storage
+const DATA_FILE = path.join(__dirname, 'pixel_data.json');
+const BACKUP_FILE = path.join(__dirname, 'pixel_data_backup.json');
 
-// Initialize all pixels to white
-for (let y = 0; y < CANVAS_SIZE; y++) {
-    for (let x = 0; x < CANVAS_SIZE; x++) {
-        pixelData[`${x},${y}`] = '#ffffff';
+// Initialize in-memory pixel storage
+let pixelData = {};
+let totalBurned = 0;
+
+// Load pixel data from file if it exists
+function loadPixelData() {
+    try {
+        if (fs.existsSync(DATA_FILE)) {
+            const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+            pixelData = data.pixels || {};
+            totalBurned = data.totalBurned || 0;
+            console.log(`Loaded ${Object.keys(pixelData).length} pixels from storage`);
+            console.log(`Loaded total burned: ${totalBurned}`);
+            
+            // Fill in any missing pixels with white
+            for (let y = 0; y < CANVAS_SIZE; y++) {
+                for (let x = 0; x < CANVAS_SIZE; x++) {
+                    const key = `${x},${y}`;
+                    if (!pixelData[key]) {
+                        pixelData[key] = {
+                            color: '#ffffff',
+                            wallet: null,
+                            timestamp: Date.now()
+                        };
+                    }
+                }
+            }
+        } else {
+            console.log('No pixel data file found, initializing with default values');
+            initializeEmptyCanvas();
+        }
+    } catch (error) {
+        console.error('Error loading pixel data:', error);
+        console.log('Initializing with default values');
+        initializeEmptyCanvas();
+        
+        // Try to load from backup
+        try {
+            if (fs.existsSync(BACKUP_FILE)) {
+                const backupData = JSON.parse(fs.readFileSync(BACKUP_FILE, 'utf8'));
+                pixelData = backupData.pixels || {};
+                totalBurned = backupData.totalBurned || 0;
+                console.log(`Restored ${Object.keys(pixelData).length} pixels from backup`);
+            }
+        } catch (backupError) {
+            console.error('Error loading backup data:', backupError);
+        }
     }
 }
+
+// Initialize empty canvas with white pixels
+function initializeEmptyCanvas() {
+    pixelData = {};
+    totalBurned = 0;
+    
+    for (let y = 0; y < CANVAS_SIZE; y++) {
+        for (let x = 0; x < CANVAS_SIZE; x++) {
+            pixelData[`${x},${y}`] = {
+                color: '#ffffff',
+                wallet: null,
+                timestamp: Date.now()
+            };
+        }
+    }
+}
+
+// Save pixel data to file
+function savePixelData() {
+    try {
+        // Create a backup of the current file if it exists
+        if (fs.existsSync(DATA_FILE)) {
+            fs.copyFileSync(DATA_FILE, BACKUP_FILE);
+        }
+        
+        // Save the current state
+        fs.writeFileSync(DATA_FILE, JSON.stringify({
+            pixels: pixelData,
+            totalBurned: totalBurned,
+            lastUpdate: Date.now()
+        }, null, 2));
+        
+        console.log('Pixel data saved to file');
+    } catch (error) {
+        console.error('Error saving pixel data:', error);
+    }
+}
+
+// Set up auto-save every 5 minutes
+const SAVE_INTERVAL = 5 * 60 * 1000; // 5 minutes
+setInterval(savePixelData, SAVE_INTERVAL);
 
 // Initialize Solana connection to mainnet
 const connection = new Connection(clusterApiUrl('mainnet-beta'));
 console.log('Connected to Solana mainnet');
 
+// Load pixel data on startup
+loadPixelData();
+
 // WebSocket broadcast function
 function broadcast(data) {
     const message = JSON.stringify(data);
-    console.log('Broadcasting to clients:', data);
+    console.log('Broadcasting to clients:', data.type);
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
             client.send(message);
@@ -45,9 +135,12 @@ function broadcast(data) {
 }
 
 // Get current canvas state
-app.get('/pixels', (req, res) => {
-    console.log('Pixels requested');
-    res.json(pixelData);
+app.get('/canvas', (req, res) => {
+    console.log('Canvas state requested');
+    res.json({
+        pixels: pixelData,
+        totalBurned: totalBurned
+    });
 });
 
 // Check $SPLACE token balance
@@ -162,9 +255,20 @@ app.post('/place-pixel', async (req, res) => {
             return res.status(400).json({ error: 'Invalid transaction or insufficient token burn' });
         }
         
-        // Update pixel
-        pixelData[`${x},${y}`] = color;
-        console.log(`Updated pixel (${x},${y}) to ${color}`);
+        // Update pixel with complete information
+        pixelData[`${x},${y}`] = {
+            color: color,
+            wallet: walletAddress,
+            timestamp: Date.now()
+        };
+        
+        console.log(`Updated pixel (${x},${y}) to ${color} by ${walletAddress}`);
+        
+        // Update burned total
+        totalBurned += COST_PER_PIXEL;
+        
+        // Save data immediately after a change
+        savePixelData();
         
         // Broadcast update to all connected clients
         broadcast({
@@ -172,6 +276,7 @@ app.post('/place-pixel', async (req, res) => {
             x,
             y,
             color,
+            walletAddress,
             timestamp: Date.now()
         });
         
@@ -190,8 +295,31 @@ wss.on('connection', (ws) => {
     // Send initial canvas state
     ws.send(JSON.stringify({
         type: 'canvas_state',
-        pixels: pixelData
+        pixels: pixelData,
+        totalBurned: totalBurned
     }));
+    
+    // Handle messages from clients
+    ws.on('message', (message) => {
+        try {
+            const data = JSON.parse(message);
+            console.log('Received message:', data.type);
+            
+            if (data.type === 'get_canvas_state') {
+                ws.send(JSON.stringify({
+                    type: 'canvas_state',
+                    pixels: pixelData,
+                    totalBurned: totalBurned
+                }));
+            } else if (data.type === 'pixel_update') {
+                // This is already handled by the HTTP endpoint
+                // but we could add direct WebSocket updates for testing
+                console.log('Received pixel update via WebSocket');
+            }
+        } catch (error) {
+            console.error('Error handling WebSocket message:', error);
+        }
+    });
     
     ws.on('close', () => {
         console.log('Client disconnected');
@@ -206,6 +334,19 @@ server.listen(PORT, () => {
     console.log(`Using token: ${SPLACE_TOKEN}`);
     console.log(`Burning to: ${BURN_ADDRESS}`);
     console.log(`Cost per pixel: ${COST_PER_PIXEL} tokens`);
+});
+
+// Graceful shutdown - save data before exiting
+process.on('SIGINT', () => {
+    console.log('Shutting down server...');
+    savePixelData();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    console.log('Shutting down server...');
+    savePixelData();
+    process.exit(0);
 });
 
 module.exports = app;
