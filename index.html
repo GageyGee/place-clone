@@ -472,7 +472,6 @@
     </div>
 
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
-    <script src="https://unpkg.com/@solana/spl-token@latest/lib/index.iife.min.js"></script>
     
     <script>
         // Configuration - UPDATE THIS AFTER DEPLOYMENT
@@ -484,8 +483,6 @@
         const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111'; // Solana burn address
         const COST_PER_PIXEL = 10000;
         const TOKEN_DECIMALS = 6; // Most tokens use 6-9 decimals, assuming 6 for $SPLACE
-        const TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
-        const ASSOCIATED_TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
         
         // DOM elements
         const canvas = document.getElementById('canvas');
@@ -554,9 +551,9 @@
         
         initCanvas();
         
-        // Initialize Solana connection using QuickNode (more reliable for public usage)
+        // Initialize Solana connection
         function initSolana() {
-            connection = new solanaWeb3.Connection('https://api.quicknode.pro/');
+            connection = new solanaWeb3.Connection('https://api.mainnet-beta.solana.com');
         }
         
         // Initialize WebSocket connection
@@ -685,38 +682,40 @@
                 return;
             }
             
-            updateStatus('Waiting for wallet approval...');
+            updateStatus('Creating transaction...');
             placePixelBtn.disabled = true;
             
             try {
                 const color = colorPicker.value;
                 const { solana } = window;
                 
-                // Create basic transaction
+                // Get latest blockhash using Phantom's connection
+                const latestBlockhash = await solana.request({
+                    method: "getLatestBlockhash",
+                    params: []
+                });
+                
+                // Create transaction
                 const transaction = new solanaWeb3.Transaction();
                 
-                // Simply add a SOL transfer of 0.000001 SOL to trigger wallet prompt
+                // Add token transfer instruction to burn address  
+                // (Simplified as SOL transfer for now - in production use proper SPL token transfer)
                 const instruction = solanaWeb3.SystemProgram.transfer({
                     fromPubkey: new solanaWeb3.PublicKey(walletAddress),
-                    toPubkey: new solanaWeb3.PublicKey('1nc1nerator11111111111111111111111111111111'),
+                    toPubkey: new solanaWeb3.PublicKey(BURN_ADDRESS),
                     lamports: 1000 // 0.000001 SOL
                 });
                 
                 transaction.add(instruction);
                 
-                // Let Phantom handle the blockhash
+                // Set blockhash and fee payer
+                transaction.recentBlockhash = latestBlockhash.value.blockhash;
                 transaction.feePayer = new solanaWeb3.PublicKey(walletAddress);
                 
-                // Request signature with Phantom
-                const signedTransaction = await solana.request({
-                    method: "signTransaction",
-                    params: {
-                        message: transaction.serializeMessage().toString('hex')
-                    }
-                });
+                updateStatus('Waiting for wallet approval...');
                 
-                // Extract signature
-                const signature = signedTransaction.signature;
+                // Sign and send transaction
+                const signedTransaction = await solana.signAndSendTransaction(transaction);
                 
                 updateStatus('Transaction confirmed, placing pixel...');
                 
@@ -730,7 +729,7 @@
                         x: selectedPixel.x,
                         y: selectedPixel.y,
                         color: color,
-                        signature: signature,
+                        signature: signedTransaction.signature,
                         walletAddress: walletAddress
                     }),
                 });
