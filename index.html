@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SolPlace - Pixel Art on Solana</title>
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.js"></script>
+    <script src="https://unpkg.com/@solana/spl-token@latest/lib/index.iife.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         * {
@@ -39,29 +40,14 @@
         #canvas {
             cursor: crosshair;
             image-rendering: pixelated;
-            background-color: #111;
+            background-color: #ffffff;
             border: 2px solid #333;
             border-radius: 8px;
             transition: transform 0.1s ease;
         }
         
-        #contract-info {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 380px;
-            background: rgba(0, 0, 0, 0.95);
-            border-top: 2px solid #333;
-            padding: 16px;
-            text-align: center;
-            color: #00FFA3;
-            font-family: monospace;
-            font-size: 14px;
-            z-index: 100;
-        }
-        
         #sidebar {
-            width: 380px;
+            width: 420px;
             background: rgba(20, 20, 20, 0.95);
             border-left: 1px solid #333;
             padding: 32px;
@@ -101,7 +87,7 @@
             background: linear-gradient(45deg, #00FFA3, #03E1FF);
             border: none;
             border-radius: 8px;
-            color: #000;
+            color: #ffffff;
             font-size: 15px;
             font-weight: 600;
             cursor: pointer;
@@ -120,13 +106,14 @@
             transform: none;
             box-shadow: none;
             cursor: not-allowed;
-            color: #666;
+            color: #888;
         }
         
-        #how-it-works-btn {
+        #how-it-works-btn, #contract-address-btn {
             background: linear-gradient(45deg, #DC1FFF, #03E1FF);
             margin-top: auto;
-            margin-bottom: 16px;
+            margin-bottom: 8px;
+            color: #ffffff;
         }
         
         #wallet-info {
@@ -170,7 +157,8 @@
         .stats {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 16px;
+            gap: 12px;
+            margin-bottom: 16px;
         }
         
         .stat-card {
@@ -182,16 +170,38 @@
         }
         
         .stat-value {
-            font-size: 18px;
+            font-size: 16px;
             font-weight: 600;
             color: #00FFA3;
+            word-break: break-all;
         }
         
         .stat-label {
-            font-size: 12px;
+            font-size: 10px;
             color: #666;
             text-transform: uppercase;
             letter-spacing: 1px;
+        }
+        
+        .burn-stats {
+            background: rgba(30, 30, 30, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            margin-bottom: 16px;
+        }
+        
+        .burn-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #FF4444;
+            margin-bottom: 8px;
+        }
+        
+        .burn-label {
+            font-size: 14px;
+            color: #888;
         }
         
         .connected-indicator {
@@ -201,6 +211,25 @@
             border-radius: 50%;
             display: inline-block;
             margin-right: 8px;
+        }
+        
+        .copy-notification {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #00FFA3;
+            color: #000;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            z-index: 1000;
+        }
+        
+        .copy-notification.show {
+            opacity: 1;
         }
         
         /* Modal styles */
@@ -348,15 +377,21 @@
                 </div>
             </div>
             
+            <div class="burn-stats">
+                <div class="burn-value" id="burned-amount">0</div>
+                <div class="burn-label">$SPLACE Burned Total</div>
+            </div>
+            
             <button id="place-pixel" disabled>Place Pixel</button>
             
             <div id="status-message">Connect your wallet to start</div>
             
+            <button id="contract-address-btn">Copy $SPLACE CA</button>
             <button id="how-it-works-btn">How It Works</button>
         </div>
     </div>
     
-    <div id="contract-info">Official $SPLACE CA: 0000000000000000000000000000000000000000000000000000000000000000</div>
+    <div class="copy-notification" id="copy-notification">Contract address copied!</div>
     
     <!-- Modal -->
     <div id="how-it-works-modal" class="modal">
@@ -431,10 +466,13 @@
         const statusMessage = document.getElementById('status-message');
         const walletAddressSpan = document.getElementById('wallet-address');
         const balanceSpan = document.getElementById('balance');
+        const burnedAmountSpan = document.getElementById('burned-amount');
         const connectedIndicator = document.querySelector('.connected-indicator');
         const howItWorksBtn = document.getElementById('how-it-works-btn');
+        const contractAddressBtn = document.getElementById('contract-address-btn');
         const modal = document.getElementById('how-it-works-modal');
         const closeBtn = document.querySelector('.close');
+        const copyNotification = document.getElementById('copy-notification');
         
         // State
         let selectedPixel = null;
@@ -443,6 +481,7 @@
         let connection = null;
         let currentScale = 1;
         let pixelState = {};
+        let totalBurned = 0;
         
         // Initialize Solana connection to mainnet
         function initSolana() {
@@ -466,6 +505,8 @@
                 } else if (data.type === 'pixel_update') {
                     pixelState[`${data.x},${data.y}`] = data.color;
                     updatePixel(data.x, data.y, data.color);
+                    totalBurned += COST_PER_PIXEL;
+                    updateBurnedDisplay();
                 }
             };
             
@@ -475,9 +516,24 @@
             };
         }
         
+        // Update burn display
+        function updateBurnedDisplay() {
+            burnedAmountSpan.textContent = totalBurned.toLocaleString();
+        }
+        
+        // Copy contract address
+        contractAddressBtn.onclick = () => {
+            navigator.clipboard.writeText(SPLACE_TOKEN).then(() => {
+                copyNotification.classList.add('show');
+                setTimeout(() => {
+                    copyNotification.classList.remove('show');
+                }, 2000);
+            });
+        }
+        
         // Update canvas with pixel data
         function updateCanvasState(pixels) {
-            ctx.fillStyle = '#111111';
+            ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
             Object.entries(pixels).forEach(([key, color]) => {
@@ -530,10 +586,23 @@
         // Check $SPLACE token balance
         async function checkBalance() {
             try {
-                // This would use @solana/spl-token to check token balance
-                // For now, we'll simulate it
-                balanceSpan.textContent = '50,000';
+                const publicKey = new solanaWeb3.PublicKey(walletAddress);
+                const mintPublicKey = new solanaWeb3.PublicKey(SPLACE_TOKEN);
+                
+                // Get associated token account
+                const tokenAccounts = await connection.getTokenAccountsByOwner(publicKey, {
+                    mint: mintPublicKey
+                });
+                
+                if (tokenAccounts.value.length > 0) {
+                    const tokenAccountInfo = await connection.getTokenAccountBalance(tokenAccounts.value[0].pubkey);
+                    const balance = tokenAccountInfo.value.uiAmount;
+                    balanceSpan.textContent = balance.toLocaleString();
+                } else {
+                    balanceSpan.textContent = '0';
+                }
             } catch (error) {
+                console.error('Balance check error:', error);
                 balanceSpan.textContent = 'Error';
             }
         }
@@ -550,12 +619,55 @@
             
             try {
                 const color = colorPicker.value;
+                const { solana } = window;
                 
                 // Create token transfer instruction to burn address
-                // This would involve @solana/spl-token
-                // For simulation purposes, we'll create a placeholder transaction
+                const transaction = new solanaWeb3.Transaction();
                 
-                const signature = 'placeholder_signature';
+                // Get or create associated token accounts
+                const fromTokenAccount = await splToken.getAssociatedTokenAddress(
+                    new solanaWeb3.PublicKey(SPLACE_TOKEN),
+                    new solanaWeb3.PublicKey(walletAddress)
+                );
+                
+                const toTokenAccount = await splToken.getAssociatedTokenAddress(
+                    new solanaWeb3.PublicKey(SPLACE_TOKEN),
+                    new solanaWeb3.PublicKey(BURN_ADDRESS)
+                );
+                
+                // Add create ATA instruction if needed
+                try {
+                    await connection.getAccountInfo(toTokenAccount);
+                } catch {
+                    const createATAInstruction = splToken.createAssociatedTokenAccountInstruction(
+                        new solanaWeb3.PublicKey(walletAddress),
+                        toTokenAccount,
+                        new solanaWeb3.PublicKey(BURN_ADDRESS),
+                        new solanaWeb3.PublicKey(SPLACE_TOKEN)
+                    );
+                    transaction.add(createATAInstruction);
+                }
+                
+                // Add transfer instruction
+                const transferInstruction = splToken.createTransferInstruction(
+                    fromTokenAccount,
+                    toTokenAccount,
+                    new solanaWeb3.PublicKey(walletAddress),
+                    COST_PER_PIXEL
+                );
+                transaction.add(transferInstruction);
+                
+                // Get latest blockhash
+                const { blockhash } = await connection.getLatestBlockhash();
+                transaction.recentBlockhash = blockhash;
+                transaction.feePayer = new solanaWeb3.PublicKey(walletAddress);
+                
+                // Sign and send transaction
+                const signedTransaction = await solana.signTransaction(transaction);
+                const signature = await connection.sendRawTransaction(signedTransaction.serialize());
+                
+                // Confirm transaction
+                await connection.confirmTransaction(signature);
                 
                 // Send pixel update to backend
                 const response = await fetch(`${API_URL}/place-pixel`, {
