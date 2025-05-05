@@ -83,7 +83,7 @@ app.get('/balance/:address', async (req, res) => {
 // Verify transaction
 async function verifyTransaction(signature, expectedAmount) {
     try {
-        // For now, accept mock signatures for testing
+        // IMPORTANT: Check for mock signatures FIRST, before calling getTransaction
         if (signature.startsWith('mock-tx-') || signature === 'valid-signature') {
             console.log('Accepting mock signature for testing');
             return true;
