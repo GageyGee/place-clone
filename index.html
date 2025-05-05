@@ -472,14 +472,10 @@
     </div>
 
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
-    <script src="https://unpkg.com/buffer@5.7.1/index.js"></script>
     
     <script>
         // Wait for scripts to load
         setTimeout(() => {
-            // Initialize Buffer
-            if (!window.Buffer) window.Buffer = buffer.Buffer;
-            
             const API_URL = 'https://place-clone-backend.onrender.com';
             const WS_URL = 'wss://place-clone-backend.onrender.com';
             
@@ -679,9 +675,10 @@
             }
             
             function createTokenTransferInstruction(fromTokenAccount, toTokenAccount, owner, amount) {
-                const data = Buffer.alloc(9);
-                data.writeUInt8(3, 0);
-                data.writeBigUInt64LE(BigInt(amount), 1);
+                const data = new Uint8Array(9);
+                data[0] = 3; // Transfer instruction
+                const view = new DataView(data.buffer);
+                view.setBigUint64(1, BigInt(amount), true);
                 
                 return new solanaWeb3.TransactionInstruction({
                     keys: [
@@ -708,7 +705,7 @@
                 return new solanaWeb3.TransactionInstruction({
                     keys,
                     programId: ASSOCIATED_TOKEN_PROGRAM_ID,
-                    data: Buffer.alloc(0)
+                    data: new Uint8Array(0)
                 });
             }
             
