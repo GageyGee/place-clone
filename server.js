@@ -3,7 +3,6 @@ const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
 const { Connection, clusterApiUrl, PublicKey } = require('@solana/web3.js');
-const { getAccount, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 
 const app = express();
 const server = http.createServer(app);
@@ -13,16 +12,12 @@ app.use(cors());
 app.use(express.json());
 
 // Constants
-const PLACE_TOKEN_ADDRESS = 'EAJmFSndFCa429pQLKJyci3RyJcPDB5WoB1ENBovpump';
-const TREASURY_ADDRESS = 'EVx4g9TLyQsH9pbvPYDe7tymsEpu7E6NfhfEE6bER96';
-const COST_PER_PIXEL = 10000;
-const CANVAS_SIZE = 1000;
+const TREASURY_ADDRESS = 'YOUR_TREASURY_WALLET_ADDRESS'; // Replace with your devnet wallet
+const COST_PER_PIXEL_LAMPORTS = 0.01 * 1e9; // 0.01 SOL
+const CANVAS_SIZE = 100; // 100x100 pixel grid
 
-// Initialize in-memory pixel storage (in production, use a database)
+// Initialize in-memory pixel storage
 const pixelData = {};
-
-// Initialize Solana connection
-const connection = new Connection(clusterApiUrl('mainnet-beta'));
 
 // Initialize all pixels to white
 for (let y = 0; y < CANVAS_SIZE; y++) {
@@ -31,11 +26,15 @@ for (let y = 0; y < CANVAS_SIZE; y++) {
     }
 }
 
+// Initialize Solana connection to devnet
+const connection = new Connection(clusterApiUrl('devnet'));
+
 // WebSocket broadcast function
 function broadcast(data) {
+    const message = JSON.stringify(data);
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify(data));
+            client.send(message);
         }
     });
 }
@@ -45,27 +44,41 @@ app.get('/pixels', (req, res) => {
     res.json(pixelData);
 });
 
-// Check token balance
+// Check SOL balance
 app.get('/balance/:address', async (req, res) => {
     try {
         const walletAddress = new PublicKey(req.params.address);
-        const tokenMint = new PublicKey(PLACE_TOKEN_ADDRESS);
+        const balance = await connection.getBalance(walletAddress);
+        const solBalance = balance / 1e9; // Convert lamports to SOL
         
-        const associatedTokenAddress = await getAssociatedTokenAddress(
-            tokenMint,
-            walletAddress,
-            false,
-            TOKEN_PROGRAM_ID
-        );
-        
-        const tokenAccount = await getAccount(connection, associatedTokenAddress);
-        const balance = Number(tokenAccount.amount);
-        
-        res.json({ balance, formatted: balance / Math.pow(10, 9) });
+        res.json({ balance, formatted: solBalance });
     } catch (error) {
         res.status(400).json({ error: error.message });
     }
 });
+
+// Verify transaction
+async function verifyTransaction(signature, expectedAmount) {
+    try {
+        const transaction = await connection.getTransaction(signature, {
+            commitment: 'confirmed'
+        });
+        
+        if (!transaction) {
+            throw new Error('Transaction not found');
+        }
+        
+        // Verify transaction details
+        const postBalance = transaction.meta.postBalances[1]; // Treasury account
+        const preBalance = transaction.meta.preBalances[1];
+        const receivedAmount = postBalance - preBalance;
+        
+        return receivedAmount >= expectedAmount;
+    } catch (error) {
+        console.error('Transaction verification error:', error);
+        return false;
+    }
+}
 
 // Place pixel endpoint
 app.post('/place-pixel', async (req, res) => {
@@ -82,9 +95,12 @@ app.post('/place-pixel', async (req, res) => {
     }
     
     try {
-        // Verify transaction signature
-        // In production, you would verify the transaction on-chain
-        // For demo purposes, we'll trust the client
+        // Verify transaction
+        const isValid = await verifyTransaction(signature, COST_PER_PIXEL_LAMPORTS);
+        
+        if (!isValid) {
+            return res.status(400).json({ error: 'Invalid transaction' });
+        }
         
         // Update pixel
         pixelData[`${x},${y}`] = color;
@@ -122,6 +138,7 @@ wss.on('connection', (ws) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    console.log(`WebSocket server is ready`);
 });
 
 module.exports = app;
