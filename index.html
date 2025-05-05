@@ -472,7 +472,6 @@
     </div>
 
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
-    <script src="https://unpkg.com/@solana/spl-token@latest/lib/index.iife.min.js"></script>
     
     <script>
         // Configuration - UPDATE THIS AFTER DEPLOYMENT
@@ -536,7 +535,7 @@
                 
                 if (data.type === 'canvas_state') {
                     pixelState = data.pixels || {};
-                    updateCanvasState(pixelState);
+                    updateCanvasState(pixelState, true); // force white background
                 } else if (data.type === 'pixel_update') {
                     pixelState[`${data.x},${data.y}`] = data.color;
                     updatePixel(data.x, data.y, data.color);
@@ -567,16 +566,21 @@
         }
         
         // Update canvas with pixel data
-        function updateCanvasState(pixels) {
+        function updateCanvasState(pixels, forceWhite = false) {
             // Always maintain white background
             ctx.fillStyle = '#ffffff';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            Object.entries(pixels).forEach(([key, color]) => {
-                const [x, y] = key.split(',').map(Number);
-                ctx.fillStyle = color;
-                ctx.fillRect(x * 5, y * 5, 5, 5);
-            });
+            // Skip rendering if force white is true and pixels contain grey defaults
+            if (!forceWhite || (forceWhite && Object.values(pixels).some(color => color !== '#111111'))) {
+                Object.entries(pixels).forEach(([key, color]) => {
+                    if (color !== '#111111') { // Skip grey pixels
+                        const [x, y] = key.split(',').map(Number);
+                        ctx.fillStyle = color;
+                        ctx.fillRect(x * 5, y * 5, 5, 5);
+                    }
+                });
+            }
             
             if (selectedPixel) {
                 highlightPixel(selectedPixel.x, selectedPixel.y);
@@ -585,8 +589,10 @@
         
         // Update single pixel
         function updatePixel(x, y, color) {
-            ctx.fillStyle = color;
-            ctx.fillRect(x * 5, y * 5, 5, 5);
+            if (color !== '#111111') { // Skip grey pixels
+                ctx.fillStyle = color;
+                ctx.fillRect(x * 5, y * 5, 5, 5);
+            }
         }
         
         // Highlight selected pixel
@@ -621,25 +627,17 @@
         
         // Check $SPLACE token balance
         async function checkBalance() {
+            balanceSpan.textContent = 'Loading...'; // Show loading state
             try {
-                const publicKey = new solanaWeb3.PublicKey(walletAddress);
-                const mintPublicKey = new solanaWeb3.PublicKey(SPLACE_TOKEN);
-                
-                // Get associated token account
-                const tokenAccounts = await connection.getTokenAccountsByOwner(publicKey, {
-                    mint: mintPublicKey
-                });
-                
-                if (tokenAccounts.value.length > 0) {
-                    const tokenAccountInfo = await connection.getTokenAccountBalance(tokenAccounts.value[0].pubkey);
-                    const balance = tokenAccountInfo.value.uiAmount;
-                    balanceSpan.textContent = balance.toLocaleString();
-                } else {
-                    balanceSpan.textContent = '0';
+                const response = await fetch(`${API_URL}/balance/${walletAddress}`);
+                const data = await response.json();
+                if (data.error) {
+                    throw new Error(data.error);
                 }
+                balanceSpan.textContent = data.formatted.toLocaleString();
             } catch (error) {
                 console.error('Balance check error:', error);
-                balanceSpan.textContent = 'Error';
+                balanceSpan.textContent = '0';
             }
         }
         
@@ -656,8 +654,9 @@
             try {
                 const color = colorPicker.value;
                 
-                // For now, send to API without token transaction (simplified)
-                // In production, you'd want to implement actual token burning
+                // Simulate transaction - replace with actual token burning logic
+                const mockSignature = 'mock-tx-' + Date.now();
+                
                 const response = await fetch(`${API_URL}/place-pixel`, {
                     method: 'POST',
                     headers: {
@@ -667,7 +666,7 @@
                         x: selectedPixel.x,
                         y: selectedPixel.y,
                         color: color,
-                        signature: 'placeholder', // Replace with actual transaction signature
+                        signature: mockSignature,
                         walletAddress: walletAddress
                     }),
                 });
