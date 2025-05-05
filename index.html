@@ -486,6 +486,12 @@
             const COST_PER_PIXEL = 10000;
             const TOKEN_DECIMALS = 6;
             
+            // RPC Configuration - UPDATE WITH YOUR QUICKNODE ENDPOINT
+            const RPC_ENDPOINTS = [
+                'https://radial-chaotic-pool.solana-mainnet.quiknode.pro/192e8e76f0a288f5a32ace0b676f7f34778f219f/', // Replace with your QuickNode HTTP endpoint
+                'https://api.metaplex.solana.com' // Backup RPC
+            ];
+            
             // DOM elements
             const canvas = document.getElementById('canvas');
             const ctx = canvas.getContext('2d');
@@ -552,11 +558,23 @@
             
             initCanvas();
             
-            // Initialize Solana connection with better RPC endpoint
-            function initSolana() {
-                // Use Helius or another public RPC endpoint with better rate limits
-                const rpcEndpoint = 'https://mainnet.helius-rpc.com/?api-key=b63a44d2-95a1-47a5-824b-c6b14c8afe41';
-                connection = new solanaWeb3.Connection(rpcEndpoint, 'confirmed');
+            // Initialize Solana connection with retry logic
+            async function initSolana() {
+                for (let i = 0; i < RPC_ENDPOINTS.length; i++) {
+                    try {
+                        connection = new solanaWeb3.Connection(RPC_ENDPOINTS[i], 'confirmed');
+                        
+                        // Test the connection
+                        await connection.getVersion();
+                        console.log(`Connected to RPC: ${RPC_ENDPOINTS[i]}`);
+                        break;
+                    } catch (error) {
+                        console.log(`Failed to connect to ${RPC_ENDPOINTS[i]}, trying next...`);
+                        if (i === RPC_ENDPOINTS.length - 1) {
+                            throw new Error('All RPC endpoints failed');
+                        }
+                    }
+                }
             }
             
             // Initialize WebSocket connection
@@ -673,7 +691,24 @@
                 }
             }
             
-            // Place pixel
+            // Create SPL token transfer instruction manually
+            function createTokenTransferInstruction(fromTokenAccount, toTokenAccount, owner, amount) {
+                const data = Buffer.alloc(9);
+                data.writeUInt8(3, 0); // Transfer instruction
+                data.writeBigUInt64LE(BigInt(amount), 1);
+                
+                return new solanaWeb3.TransactionInstruction({
+                    keys: [
+                        { pubkey: fromTokenAccount, isSigner: false, isWritable: true },
+                        { pubkey: toTokenAccount, isSigner: false, isWritable: true },
+                        { pubkey: owner, isSigner: true, isWritable: false },
+                    ],
+                    programId: solanaWeb3.TOKEN_PROGRAM_ID,
+                    data
+                });
+            }
+            
+            // Place pixel with token burning
             async function placePixel() {
                 if (!selectedPixel || !walletAddress) {
                     updateStatus('Please select a pixel and connect wallet');
@@ -687,35 +722,67 @@
                     const color = colorPicker.value;
                     const { solana } = window;
                     
-                    // Get the latest blockhash with retry
-                    let latestBlockhash;
-                    try {
-                        latestBlockhash = await connection.getLatestBlockhash();
-                    } catch (error) {
-                        // Retry once with a different RPC
-                        connection = new solanaWeb3.Connection('https://api.metaplex.solana.com', 'confirmed');
-                        latestBlockhash = await connection.getLatestBlockhash();
-                    }
-                    
-                    // Create a simple transaction for SOL transfer (for demo purposes)
-                    const transaction = new solanaWeb3.Transaction();
+                    // Get latest blockhash
+                    const latestBlockhash = await connection.getLatestBlockhash();
                     
                     // Convert public keys
-                    const fromPubkey = new solanaWeb3.PublicKey(walletAddress);
-                    const toPubkey = new solanaWeb3.PublicKey(BURN_ADDRESS);
+                    const mintPubkey = new solanaWeb3.PublicKey(SPLACE_TOKEN);
+                    const ownerPubkey = new solanaWeb3.PublicKey(walletAddress);
+                    const burnPubkey = new solanaWeb3.PublicKey(BURN_ADDRESS);
                     
-                    // Add SOL transfer instruction (simplified for demo)
-                    const transferInstruction = solanaWeb3.SystemProgram.transfer({
-                        fromPubkey: fromPubkey,
-                        toPubkey: toPubkey,
-                        lamports: 1000 // 0.000001 SOL
-                    });
+                    // Get associated token accounts
+                    const ownerTokenAccount = await solanaWeb3.getAssociatedTokenAddress(
+                        mintPubkey,
+                        ownerPubkey,
+                        false,
+                        solanaWeb3.TOKEN_PROGRAM_ID,
+                        solanaWeb3.ASSOCIATED_TOKEN_PROGRAM_ID
+                    );
+                    
+                    const burnTokenAccount = await solanaWeb3.getAssociatedTokenAddress(
+                        mintPubkey,
+                        burnPubkey,
+                        false,
+                        solanaWeb3.TOKEN_PROGRAM_ID,
+                        solanaWeb3.ASSOCIATED_TOKEN_PROGRAM_ID
+                    );
+                    
+                    // Create transaction
+                    const transaction = new solanaWeb3.Transaction();
+                    
+                    // Check if burn token account exists, if not create it
+                    try {
+                        const burnAccountInfo = await connection.getAccountInfo(burnTokenAccount);
+                        if (!burnAccountInfo) {
+                            // Create associated token account for burn address
+                            const createAccountInstruction = solanaWeb3.createAssociatedTokenAccountInstruction(
+                                ownerPubkey,
+                                burnTokenAccount,
+                                burnPubkey,
+                                mintPubkey,
+                                solanaWeb3.TOKEN_PROGRAM_ID,
+                                solanaWeb3.ASSOCIATED_TOKEN_PROGRAM_ID
+                            );
+                            transaction.add(createAccountInstruction);
+                        }
+                    } catch (error) {
+                        console.log('Error checking burn account existence:', error);
+                    }
+                    
+                    // Add token transfer instruction to burn tokens
+                    const amount = COST_PER_PIXEL * Math.pow(10, TOKEN_DECIMALS);
+                    const transferInstruction = createTokenTransferInstruction(
+                        ownerTokenAccount,
+                        burnTokenAccount,
+                        ownerPubkey,
+                        amount
+                    );
                     
                     transaction.add(transferInstruction);
                     
                     // Set recent blockhash and fee payer
                     transaction.recentBlockhash = latestBlockhash.blockhash;
-                    transaction.feePayer = fromPubkey;
+                    transaction.feePayer = ownerPubkey;
                     
                     updateStatus('Waiting for wallet approval...');
                     
@@ -801,9 +868,13 @@
             });
             
             // Initialize
-            initSolana();
-            initWebSocket();
-            updateStatus('Connect your wallet to start');
+            initSolana().then(() => {
+                initWebSocket();
+                updateStatus('Connect your wallet to start');
+            }).catch(error => {
+                updateStatus('Failed to connect to RPC. Please check your configuration.');
+                console.error('RPC connection error:', error);
+            });
         });
     </script>
 </body>
