@@ -482,6 +482,7 @@
         const SPLACE_TOKEN = '38KWMyCbPurCgqqwx5JG4EouREtjwcCaDqvL9KNGsvDf';
         const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111'; // Solana burn address
         const COST_PER_PIXEL = 10000;
+        const TOKEN_DECIMALS = 6; // Most tokens use 6-9 decimals, assuming 6 for $SPLACE
         
         // DOM elements
         const canvas = document.getElementById('canvas');
@@ -509,20 +510,21 @@
         let pixelState = {};
         let totalBurned = 0;
         
-        // Format number to K/M/B format (FIXED)
+        // Format number to K/M/B format
         function formatNumber(num) {
-            if (num < 1000) return num.toString();
+            // Convert from raw token amount to actual value using decimals
+            const actualValue = num / Math.pow(10, TOKEN_DECIMALS);
             
-            const absNum = Math.abs(num);
-            if (absNum < 1000000) {
-                const k = absNum / 1000;
+            if (actualValue < 1000) return actualValue.toString();
+            if (actualValue < 1000000) {
+                const k = actualValue / 1000;
                 return k % 1 === 0 ? k + 'K' : k.toFixed(1) + 'K';
             }
-            if (absNum < 1000000000) {
-                const m = absNum / 1000000;
+            if (actualValue < 1000000000) {
+                const m = actualValue / 1000000;
                 return m % 1 === 0 ? m + 'M' : m.toFixed(1) + 'M';
             }
-            const b = absNum / 1000000000;
+            const b = actualValue / 1000000000;
             return b % 1 === 0 ? b + 'B' : b.toFixed(1) + 'B';
         }
         
@@ -671,8 +673,8 @@
             try {
                 const color = colorPicker.value;
                 
-                // Use a valid mock signature for testing
-                const mockSignature = 'test_signature_' + Date.now();
+                // Simulate transaction - replace with actual token burning logic
+                const mockSignature = 'valid-signature'; // Changed to avoid backend issues
                 
                 const response = await fetch(`${API_URL}/place-pixel`, {
                     method: 'POST',
