@@ -698,19 +698,43 @@
                 // Create transaction
                 const transaction = new solanaWeb3.Transaction();
                 
-                // Add token transfer instruction to burn address  
-                // (Simplified as SOL transfer for now - in production use proper SPL token transfer)
-                const instruction = solanaWeb3.SystemProgram.transfer({
-                    fromPubkey: new solanaWeb3.PublicKey(walletAddress),
-                    toPubkey: new solanaWeb3.PublicKey(BURN_ADDRESS),
-                    lamports: 1000 // 0.000001 SOL
-                });
+                // Add SPL token transfer instruction to burn address  
+                const tokenMint = new solanaWeb3.PublicKey(SPLACE_TOKEN);
+                const fromPublicKey = new solanaWeb3.PublicKey(walletAddress);
+                const burnPublicKey = new solanaWeb3.PublicKey(BURN_ADDRESS);
                 
-                transaction.add(instruction);
+                // Get associated token addresses
+                const fromTokenAccount = await solanaWeb3.getAssociatedTokenAddress(
+                    tokenMint,
+                    fromPublicKey,
+                    false,
+                    solanaWeb3.TOKEN_PROGRAM_ID,
+                    solanaWeb3.ASSOCIATED_TOKEN_PROGRAM_ID
+                );
+                
+                const burnTokenAccount = await solanaWeb3.getAssociatedTokenAddress(
+                    tokenMint,
+                    burnPublicKey,
+                    false,
+                    solanaWeb3.TOKEN_PROGRAM_ID,
+                    solanaWeb3.ASSOCIATED_TOKEN_PROGRAM_ID
+                );
+                
+                // Create transfer instruction
+                const transferInstruction = solanaWeb3.createTransferInstruction(
+                    fromTokenAccount,
+                    burnTokenAccount,
+                    fromPublicKey,
+                    BigInt(COST_PER_PIXEL * Math.pow(10, TOKEN_DECIMALS)), // Include token decimals
+                    [],
+                    solanaWeb3.TOKEN_PROGRAM_ID
+                );
+                
+                transaction.add(transferInstruction);
                 
                 // Set blockhash and fee payer
                 transaction.recentBlockhash = latestBlockhash.value.blockhash;
-                transaction.feePayer = new solanaWeb3.PublicKey(walletAddress);
+                transaction.feePayer = fromPublicKey;
                 
                 updateStatus('Waiting for wallet approval...');
                 
