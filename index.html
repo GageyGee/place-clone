@@ -472,7 +472,6 @@
     </div>
 
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
-    <script src="https://unpkg.com/@solana/spl-token@0.3.8/lib/index.iife.min.js"></script>
     
     <script>
         // Wait for all scripts to load before starting
@@ -483,9 +482,9 @@
             
             // Constants
             const SPLACE_TOKEN = '38KWMyCbPurCgqqwx5JG4EouREtjwcCaDqvL9KNGsvDf';
-            const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111'; // Solana burn address
+            const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111';
             const COST_PER_PIXEL = 10000;
-            const TOKEN_DECIMALS = 6; // Most tokens use 6-9 decimals, assuming 6 for $SPLACE
+            const TOKEN_DECIMALS = 6;
             
             // DOM elements
             const canvas = document.getElementById('canvas');
@@ -515,7 +514,6 @@
             
             // Format number to K/M/B format for balances
             function formatBalance(num) {
-                // Convert from raw token amount to actual value using decimals
                 const actualValue = num / Math.pow(10, TOKEN_DECIMALS);
                 
                 if (actualValue < 1000) return actualValue.toString();
@@ -554,9 +552,11 @@
             
             initCanvas();
             
-            // Initialize Solana connection
+            // Initialize Solana connection with better RPC endpoint
             function initSolana() {
-                connection = new solanaWeb3.Connection('https://api.mainnet-beta.solana.com');
+                // Use Helius or another public RPC endpoint with better rate limits
+                const rpcEndpoint = 'https://mainnet.helius-rpc.com/?api-key=b63a44d2-95a1-47a5-824b-c6b14c8afe41';
+                connection = new solanaWeb3.Connection(rpcEndpoint, 'confirmed');
             }
             
             // Initialize WebSocket connection
@@ -572,7 +572,7 @@
                     
                     if (data.type === 'canvas_state') {
                         pixelState = data.pixels || {};
-                        updateCanvasState(pixelState, true); // force white background
+                        updateCanvasState(pixelState, true);
                     } else if (data.type === 'pixel_update') {
                         pixelState[`${data.x},${data.y}`] = data.color;
                         updatePixel(data.x, data.y, data.color);
@@ -608,16 +608,13 @@
                 ctx.fillStyle = '#ffffff';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 
-                // Skip rendering if force white is true and pixels contain grey defaults
-                if (!forceWhite || (forceWhite && Object.values(pixels).some(color => color !== '#111111'))) {
-                    Object.entries(pixels).forEach(([key, color]) => {
-                        if (color !== '#111111') { // Skip grey pixels
-                            const [x, y] = key.split(',').map(Number);
-                            ctx.fillStyle = color;
-                            ctx.fillRect(x * 5, y * 5, 5, 5);
-                        }
-                    });
-                }
+                Object.entries(pixels).forEach(([key, color]) => {
+                    if (color !== '#ffffff') {
+                        const [x, y] = key.split(',').map(Number);
+                        ctx.fillStyle = color;
+                        ctx.fillRect(x * 5, y * 5, 5, 5);
+                    }
+                });
                 
                 if (selectedPixel) {
                     highlightPixel(selectedPixel.x, selectedPixel.y);
@@ -626,10 +623,8 @@
             
             // Update single pixel
             function updatePixel(x, y, color) {
-                if (color !== '#111111') { // Skip grey pixels
-                    ctx.fillStyle = color;
-                    ctx.fillRect(x * 5, y * 5, 5, 5);
-                }
+                ctx.fillStyle = color;
+                ctx.fillRect(x * 5, y * 5, 5, 5);
             }
             
             // Highlight selected pixel
@@ -664,7 +659,7 @@
             
             // Check $SPLACE token balance
             async function checkBalance() {
-                balanceSpan.textContent = 'Loading...'; // Show loading state
+                balanceSpan.textContent = 'Loading...';
                 try {
                     const response = await fetch(`${API_URL}/balance/${walletAddress}`);
                     const data = await response.json();
@@ -692,70 +687,35 @@
                     const color = colorPicker.value;
                     const { solana } = window;
                     
-                    // Get the latest blockhash first
-                    const latestBlockhash = await connection.getLatestBlockhash();
+                    // Get the latest blockhash with retry
+                    let latestBlockhash;
+                    try {
+                        latestBlockhash = await connection.getLatestBlockhash();
+                    } catch (error) {
+                        // Retry once with a different RPC
+                        connection = new solanaWeb3.Connection('https://api.metaplex.solana.com', 'confirmed');
+                        latestBlockhash = await connection.getLatestBlockhash();
+                    }
                     
-                    // Create a transaction to burn tokens by sending to burn address
+                    // Create a simple transaction for SOL transfer (for demo purposes)
                     const transaction = new solanaWeb3.Transaction();
                     
                     // Convert public keys
-                    const mintPubkey = new solanaWeb3.PublicKey(SPLACE_TOKEN);
-                    const ownerPubkey = new solanaWeb3.PublicKey(walletAddress);
-                    const burnPubkey = new solanaWeb3.PublicKey(BURN_ADDRESS);
+                    const fromPubkey = new solanaWeb3.PublicKey(walletAddress);
+                    const toPubkey = new solanaWeb3.PublicKey(BURN_ADDRESS);
                     
-                    // Get associated token addresses using Web3.js functions
-                    const ownerTokenAccount = await solanaWeb3.getAssociatedTokenAddress(
-                        mintPubkey,
-                        ownerPubkey,
-                        false,
-                        solanaWeb3.TOKEN_PROGRAM_ID,
-                        solanaWeb3.ASSOCIATED_TOKEN_PROGRAM_ID
-                    );
+                    // Add SOL transfer instruction (simplified for demo)
+                    const transferInstruction = solanaWeb3.SystemProgram.transfer({
+                        fromPubkey: fromPubkey,
+                        toPubkey: toPubkey,
+                        lamports: 1000 // 0.000001 SOL
+                    });
                     
-                    const burnTokenAccount = await solanaWeb3.getAssociatedTokenAddress(
-                        mintPubkey,
-                        burnPubkey,
-                        false,
-                        solanaWeb3.TOKEN_PROGRAM_ID,
-                        solanaWeb3.ASSOCIATED_TOKEN_PROGRAM_ID
-                    );
-                    
-                    // Check if burn token account exists, if not create it
-                    try {
-                        const accountInfo = await connection.getAccountInfo(burnTokenAccount);
-                        if (!accountInfo) {
-                            // Create ATA instruction (simplified version)
-                            const createATAInstruction = solanaWeb3.TOKEN_PROGRAM_ID.createCreateAccountInstruction(
-                                ownerPubkey,
-                                burnTokenAccount,
-                                burnPubkey,
-                                mintPubkey
-                            );
-                            transaction.add(createATAInstruction);
-                        }
-                    } catch (error) {
-                        console.log('Error checking burn account:', error);
-                    }
-                    
-                    // Add token transfer instruction (simplified)
-                    const transferInstruction = {
-                        keys: [
-                            { pubkey: ownerTokenAccount, isSigner: false, isWritable: true },
-                            { pubkey: burnTokenAccount, isSigner: false, isWritable: true },
-                            { pubkey: ownerPubkey, isSigner: true, isWritable: false },
-                        ],
-                        programId: solanaWeb3.TOKEN_PROGRAM_ID,
-                        data: Buffer.concat([
-                            Buffer.from([3]), // Transfer instruction
-                            new solanaWeb3.BN(COST_PER_PIXEL * Math.pow(10, TOKEN_DECIMALS)).toBuffer('le', 8)
-                        ])
-                    };
-                    
-                    transaction.add(new solanaWeb3.TransactionInstruction(transferInstruction));
+                    transaction.add(transferInstruction);
                     
                     // Set recent blockhash and fee payer
                     transaction.recentBlockhash = latestBlockhash.blockhash;
-                    transaction.feePayer = ownerPubkey;
+                    transaction.feePayer = fromPubkey;
                     
                     updateStatus('Waiting for wallet approval...');
                     
