@@ -468,7 +468,7 @@
             </ul>
             
             <h3>Deflationary Mechanism</h3>
-            <p>Every pixel placement burns 10,000 $SPLACE tokens, making the token deflationary. The tokens are permanently removed from circulation, increasing scarcity over time.</p>
+            <p>Every pixel placement burns 100 $SPLACE tokens, making the token deflationary. The tokens are permanently removed from circulation, increasing scarcity over time.</p>
             
             <h3>Features</h3>
             <div class="feature-list">
@@ -516,6 +516,9 @@
         const COST_PER_PIXEL = 100;
         const TOKEN_DECIMALS = 6;
         
+        // Use your paid QuickNode RPC endpoint
+        const RPC_ENDPOINT = 'https://radial-chaotic-pool.solana-mainnet.quiknode.pro/192e8e76f0a288f5a32ace0b676f7f34778f219f/';
+        
         const TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
         const ASSOCIATED_TOKEN_PROGRAM_ID = new solanaWeb3.PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
         
@@ -526,6 +529,18 @@
         let currentScale = 1;
         let pixelState = {};
         let totalBurned = 0;
+        
+        // Cache for transaction statuses to avoid redundant RPC calls
+        let transactionStatusCache = {};
+        
+        // RPC request tracking for rate limiting
+        const rpcTracking = {
+            lastRequestTime: 0,
+            requestCount: 0,
+            maxRequestsPerMinute: 60, // Adjust based on your QuickNode plan
+            backoffTime: 2000, // Initial backoff time in ms
+            maxBackoffTime: 30000, // Maximum backoff time in ms
+        };
         
         // DOM elements
         const canvas = document.getElementById('canvas');
@@ -548,7 +563,7 @@
             ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
         
-        // Initialize WebSocket
+        // Initialize WebSocket with reconnection logic
         function initWebSocket() {
             try {
                 console.log('Connecting to WebSocket server...');
@@ -613,22 +628,88 @@
             }
         }
         
-        // Initialize connection to Solana
+        // Function to check if we can make an RPC request
+        function canMakeRpcRequest() {
+            const now = Date.now();
+            const timeSinceLastRequest = now - rpcTracking.lastRequestTime;
+            
+            // Reset counter if it's been more than a minute
+            if (timeSinceLastRequest > 60000) {
+                rpcTracking.requestCount = 0;
+                rpcTracking.backoffTime = 2000; // Reset backoff time
+            }
+            
+            return rpcTracking.requestCount < rpcTracking.maxRequestsPerMinute;
+        }
+        
+        // Track RPC request and handle rate limiting
+        function trackRpcRequest() {
+            const now = Date.now();
+            const timeSinceLastRequest = now - rpcTracking.lastRequestTime;
+            
+            // Reset counter if it's been more than a minute
+            if (timeSinceLastRequest > 60000) {
+                rpcTracking.requestCount = 1;
+            } else {
+                rpcTracking.requestCount++;
+            }
+            
+            rpcTracking.lastRequestTime = now;
+        }
+        
+        // Sleep function with exponential backoff for rate limiting
+        async function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+        
+        // Handle RPC errors with exponential backoff
+        async function handleRpcError(error, retryFn) {
+            console.error('RPC error:', error);
+            
+            // Check if it's a rate limit error
+            if (error.message && (error.message.includes('429') || error.message.includes('Too many requests'))) {
+                updateStatus('RPC rate limit reached. Retrying...');
+                
+                // Increase backoff time with each retry (exponential backoff)
+                rpcTracking.backoffTime = Math.min(rpcTracking.backoffTime * 2, rpcTracking.maxBackoffTime);
+                console.log(`Backing off for ${rpcTracking.backoffTime}ms before retry`);
+                
+                await sleep(rpcTracking.backoffTime);
+                
+                // Try again
+                if (retryFn) {
+                    return await retryFn();
+                }
+            } else {
+                // For other errors, just wait a bit
+                await sleep(1000);
+                
+                if (retryFn) {
+                    return await retryFn();
+                }
+            }
+            
+            // Return null if no retry function provided or retry failed
+            return null;
+        }
+        
+        // Initialize connection to Solana with the better RPC endpoint
         async function initConnection() {
             try {
-                const endpoint = 'https://radial-chaotic-pool.solana-mainnet.quiknode.pro/192e8e76f0a288f5a32ace0b676f7f34778f219f/';
-                console.log('Connecting to Solana RPC');
-                connection = new solanaWeb3.Connection(endpoint, 'confirmed');
+                console.log('Connecting to Solana RPC:', RPC_ENDPOINT);
+                connection = new solanaWeb3.Connection(RPC_ENDPOINT, 'confirmed');
                 return true;
             } catch (error) {
                 console.error('RPC connection error:', error);
                 // Fallback to public endpoint
                 try {
                     const fallbackEndpoint = 'https://api.mainnet-beta.solana.com';
+                    console.log('Falling back to public endpoint:', fallbackEndpoint);
                     connection = new solanaWeb3.Connection(fallbackEndpoint, 'confirmed');
                     return true;
                 } catch (fallbackError) {
                     console.error('Fallback RPC error:', fallbackError);
+                    updateStatus('Failed to connect to Solana. Please refresh.');
                     return false;
                 }
             }
@@ -757,310 +838,3 @@
             } else {
                 hideTooltip();
             }
-        });
-        
-        canvas.addEventListener('mouseout', hideTooltip);
-        
-        // Add zoom functionality
-        document.getElementById('canvas-container').addEventListener('wheel', function(e) {
-            e.preventDefault();
-            
-            const delta = e.deltaY > 0 ? 0.9 : 1.1;
-            currentScale = Math.max(0.5, Math.min(5, currentScale * delta));
-            
-            canvas.style.transform = `scale(${currentScale})`;
-        });
-        
-        function connectWallet() {
-            try {
-                const { solana } = window;
-                if (!solana || !solana.isPhantom) {
-                    alert('Phantom wallet not installed!');
-                    return;
-                }
-                
-                updateStatus('Connecting to wallet...');
-                
-                solana.connect()
-                    .then(response => {
-                        walletAddress = response.publicKey.toString();
-                        walletAddressSpan.textContent = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
-                        connectWalletBtn.textContent = 'Connected';
-                        connectWalletBtn.disabled = true;
-                        connectedIndicator.style.display = 'inline-block';
-                        placePixelBtn.disabled = false;
-                        updateStatus('Wallet connected!');
-                        
-                        checkBalance();
-                    })
-                    .catch(error => {
-                        updateStatus(`Error: ${error.message}`);
-                    });
-            } catch (error) {
-                updateStatus(`Error: ${error.message}`);
-            }
-        }
-        
-        async function checkBalance() {
-            if (!walletAddress) return;
-            
-            balanceSpan.textContent = 'Loading...';
-            try {
-                const response = await fetch(`${API_URL}/balance/${walletAddress}`);
-                const data = await response.json();
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-                balanceSpan.textContent = formatBalance(data.formatted);
-            } catch (error) {
-                console.error('Balance check error:', error);
-                balanceSpan.textContent = '0';
-            }
-        }
-        
-        async function getAssociatedTokenAddress(mint, owner) {
-            const [address] = await solanaWeb3.PublicKey.findProgramAddress(
-                [
-                    owner.toBuffer(),
-                    TOKEN_PROGRAM_ID.toBuffer(),
-                    mint.toBuffer(),
-                ],
-                ASSOCIATED_TOKEN_PROGRAM_ID
-            );
-            return address;
-        }
-        
-        function createTokenTransferInstruction(fromTokenAccount, toTokenAccount, owner, amount) {
-            const data = new Uint8Array(9);
-            data[0] = 3; // Transfer instruction
-            const view = new DataView(data.buffer);
-            view.setBigUint64(1, BigInt(amount), true);
-            
-            return new solanaWeb3.TransactionInstruction({
-                keys: [
-                    { pubkey: fromTokenAccount, isSigner: false, isWritable: true },
-                    { pubkey: toTokenAccount, isSigner: false, isWritable: true },
-                    { pubkey: owner, isSigner: true, isWritable: false },
-                ],
-                programId: TOKEN_PROGRAM_ID,
-                data
-            });
-        }
-        
-        function createAssociatedTokenAccountInstruction(payer, associatedToken, owner, mint) {
-            const keys = [
-                { pubkey: payer, isSigner: true, isWritable: true },
-                { pubkey: associatedToken, isSigner: false, isWritable: true },
-                { pubkey: owner, isSigner: false, isWritable: false },
-                { pubkey: mint, isSigner: false, isWritable: false },
-                { pubkey: solanaWeb3.SystemProgram.programId, isSigner: false, isWritable: false },
-                { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-                { pubkey: solanaWeb3.SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
-            ];
-            
-            return new solanaWeb3.TransactionInstruction({
-                keys,
-                programId: ASSOCIATED_TOKEN_PROGRAM_ID,
-                data: new Uint8Array(0)
-            });
-        }
-        
-        async function placePixel() {
-            if (!selectedPixel || !walletAddress) {
-                updateStatus('Please select a pixel and connect wallet');
-                return;
-            }
-            
-            updateStatus('Creating transaction...');
-            placePixelBtn.disabled = true;
-            
-            try {
-                const color = colorPicker.value;
-                const { solana } = window;
-                
-                const latestBlockhash = await connection.getLatestBlockhash();
-                
-                const mintPubkey = new solanaWeb3.PublicKey(SPLACE_TOKEN);
-                const ownerPubkey = new solanaWeb3.PublicKey(walletAddress);
-                const burnPubkey = new solanaWeb3.PublicKey(BURN_ADDRESS);
-                
-                const ownerTokenAccount = await getAssociatedTokenAddress(mintPubkey, ownerPubkey);
-                const burnTokenAccount = await getAssociatedTokenAddress(mintPubkey, burnPubkey);
-                
-                const transaction = new solanaWeb3.Transaction();
-                
-                try {
-                    const burnAccountInfo = await connection.getAccountInfo(burnTokenAccount);
-                    if (!burnAccountInfo) {
-                        const createAccountInstruction = createAssociatedTokenAccountInstruction(
-                            ownerPubkey,
-                            burnTokenAccount,
-                            burnPubkey,
-                            mintPubkey
-                        );
-                        transaction.add(createAccountInstruction);
-                    }
-                } catch (error) {
-                    console.log('Error checking burn account existence:', error);
-                }
-                
-                const amount = COST_PER_PIXEL * Math.pow(10, TOKEN_DECIMALS);
-                const transferInstruction = createTokenTransferInstruction(
-                    ownerTokenAccount,
-                    burnTokenAccount,
-                    ownerPubkey,
-                    amount
-                );
-                
-                transaction.add(transferInstruction);
-                
-                transaction.recentBlockhash = latestBlockhash.blockhash;
-                transaction.feePayer = ownerPubkey;
-                
-                updateStatus('Waiting for wallet approval...');
-                
-                const { signature } = await solana.signAndSendTransaction(transaction);
-                console.log('Transaction signature:', signature);
-                
-                updateStatus('Transaction sent, waiting for confirmation...');
-                
-                // Wait for transaction confirmation
-                try {
-                    const confirmResult = await connection.confirmTransaction(signature, 'confirmed');
-                    console.log('Transaction confirmed');
-                    updateStatus('Transaction confirmed! Placing pixel...');
-                    
-                    // Store full pixel data locally for immediate feedback
-                    const timestamp = Date.now();
-                    pixelState[`${selectedPixel.x},${selectedPixel.y}`] = {
-                        color: color,
-                        wallet: walletAddress,
-                        timestamp: timestamp
-                    };
-                    
-                    // Update visual display
-                    updatePixel(selectedPixel.x, selectedPixel.y, color);
-                    
-                    // Send via WebSocket for real-time updates
-                    if (ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({
-                            type: 'pixel_update',
-                            x: selectedPixel.x,
-                            y: selectedPixel.y,
-                            color: color,
-                            walletAddress: walletAddress,
-                            signature: signature,
-                            timestamp: timestamp,
-                            self: true // Flag to prevent double-counting
-                        }));
-                    }
-                    
-                    // Also send via HTTP for reliable server-side storage
-                    const pixelData = {
-                        x: selectedPixel.x,
-                        y: selectedPixel.y,
-                        color: color,
-                        walletAddress: walletAddress,
-                        signature: signature,
-                        burnAddress: BURN_ADDRESS,
-                        tokenMint: SPLACE_TOKEN,
-                        tokenAmount: amount.toString(),
-                        timestamp: timestamp
-                    };
-                    
-                    try {
-                        const response = await fetch(`${API_URL}/place-pixel`, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify(pixelData)
-                        });
-                        
-                        const data = await response.json();
-                        
-                        if (data.success) {
-                            console.log('Pixel placement confirmed by server');
-                            updateStatus('Pixel placed successfully!');
-                            
-                            // Request updated canvas state to ensure synchronization
-                            setTimeout(() => {
-                                if (ws && ws.readyState === WebSocket.OPEN) {
-                                    ws.send(JSON.stringify({
-                                        type: 'get_canvas_state',
-                                        client: walletAddress
-                                    }));
-                                }
-                            }, 1000);
-                        } else {
-                            console.error('Server error:', data.error);
-                            updateStatus('Warning: Pixel placed, but server sync failed');
-                        }
-                    } catch (fetchError) {
-                        console.error('HTTP error:', fetchError);
-                        updateStatus('Warning: Pixel visible but server sync failed');
-                    }
-                    
-                    // Update local burn counter and check balance
-                    totalBurned += COST_PER_PIXEL;
-                    updateBurnedDisplay();
-                    checkBalance();
-                } catch (confirmError) {
-                    console.error('Confirmation error:', confirmError);
-                    updateStatus('Transaction may have succeeded. Check your balance.');
-                }
-            } catch (error) {
-                console.error('Transaction error:', error);
-                updateStatus(`Error: ${error.message}`);
-            } finally {
-                placePixelBtn.disabled = false;
-            }
-        }
-        
-        function showHowItWorks() {
-            modal.style.display = 'block';
-        }
-        
-        function closeModal() {
-            modal.style.display = 'none';
-        }
-        
-        function copyContractAddress() {
-            navigator.clipboard.writeText(SPLACE_TOKEN).then(() => {
-                copyNotification.classList.add('show');
-                setTimeout(() => {
-                    copyNotification.classList.remove('show');
-                }, 2000);
-            });
-        }
-        
-        // Close modal when clicking outside
-        window.onclick = function(event) {
-            if (event.target == modal) {
-                modal.style.display = 'none';
-            }
-        };
-        
-        // Initialize the app
-        function initApp() {
-            console.log('Initializing SolPlace app...');
-            
-            initCanvas();
-            initConnection().then(success => {
-                if (success) {
-                    console.log('RPC connected successfully');
-                    initWebSocket();
-                    updateStatus('Connect your wallet to start');
-                } else {
-                    updateStatus('Error connecting to Solana. Please refresh.');
-                }
-            });
-        }
-        
-        // Start the app when document is ready
-        document.addEventListener('DOMContentLoaded', function() {
-            initApp();
-        });
-    </script>
-</body>
-</html>
