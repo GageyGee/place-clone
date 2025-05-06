@@ -58,19 +58,28 @@
             overflow-y: auto;
         }
         
-        .logo-container {
+        .header-container {
             display: flex;
-            align-items: center;
             justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
         }
         
-        .twitter-icon {
-            color: #ffffff;
-            font-size: 24px;
+        .logo-container {
+            flex-grow: 1;
+        }
+        
+        .twitter-link {
+            font-size: 20px;
+            font-weight: bold;
+            text-decoration: none;
+            color: #999;
+            margin-left: 10px;
             transition: color 0.2s ease;
+            margin-top: 5px;
         }
         
-        .twitter-icon:hover {
+        .twitter-link:hover {
             color: #1DA1F2;
         }
         
@@ -448,17 +457,12 @@
             <canvas id="canvas" width="500" height="500" onclick="canvasClick(event)"></canvas>
         </div>
         <div id="sidebar">
-            <div class="logo-container">
-                <div>
+            <div class="header-container">
+                <div class="logo-container">
                     <h1 class="logo">SolPlace</h1>
                     <p style="color: #666; font-size: 14px;">Collaborative pixel art on Solana, inspired by r/place.</p>
                 </div>
-                <a href="https://x.com/SolPlace_io" target="_blank" class="twitter-icon" title="Follow us on X/Twitter">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M7 20l4.55-4.55c.88-.88 1.32-1.32 1.45-1.85.1-.44.1-.9 0-1.35-.13-.53-.57-.97-1.45-1.85L7 7"></path>
-                        <path d="M17 20V7"></path>
-                    </svg>
-                </a>
+                <a href="https://x.com/SolPlace_io" target="_blank" class="twitter-link" title="Follow us on X/Twitter">𝕏</a>
             </div>
             
             <div class="card">
