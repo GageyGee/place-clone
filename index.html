@@ -468,7 +468,7 @@
             </ul>
             
             <h3>Deflationary Mechanism</h3>
-            <p>Every pixel placement burns 100 $SPLACE tokens, making the token deflationary. The tokens are permanently removed from circulation, increasing scarcity over time.</p>
+            <p>Every pixel placement burns 10,000 $SPLACE tokens, making the token deflationary. The tokens are permanently removed from circulation, increasing scarcity over time.</p>
             
             <h3>Features</h3>
             <div class="feature-list">
@@ -530,18 +530,6 @@
         let pixelState = {};
         let totalBurned = 0;
         
-        // Cache for transaction statuses to avoid redundant RPC calls
-        let transactionStatusCache = {};
-        
-        // RPC request tracking for rate limiting
-        const rpcTracking = {
-            lastRequestTime: 0,
-            requestCount: 0,
-            maxRequestsPerMinute: 60, // Adjust based on your QuickNode plan
-            backoffTime: 2000, // Initial backoff time in ms
-            maxBackoffTime: 30000, // Maximum backoff time in ms
-        };
-        
         // DOM elements
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
@@ -563,7 +551,7 @@
             ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
         
-        // Initialize WebSocket with reconnection logic
+        // Initialize WebSocket
         function initWebSocket() {
             try {
                 console.log('Connecting to WebSocket server...');
@@ -628,72 +616,7 @@
             }
         }
         
-        // Function to check if we can make an RPC request
-        function canMakeRpcRequest() {
-            const now = Date.now();
-            const timeSinceLastRequest = now - rpcTracking.lastRequestTime;
-            
-            // Reset counter if it's been more than a minute
-            if (timeSinceLastRequest > 60000) {
-                rpcTracking.requestCount = 0;
-                rpcTracking.backoffTime = 2000; // Reset backoff time
-            }
-            
-            return rpcTracking.requestCount < rpcTracking.maxRequestsPerMinute;
-        }
-        
-        // Track RPC request and handle rate limiting
-        function trackRpcRequest() {
-            const now = Date.now();
-            const timeSinceLastRequest = now - rpcTracking.lastRequestTime;
-            
-            // Reset counter if it's been more than a minute
-            if (timeSinceLastRequest > 60000) {
-                rpcTracking.requestCount = 1;
-            } else {
-                rpcTracking.requestCount++;
-            }
-            
-            rpcTracking.lastRequestTime = now;
-        }
-        
-        // Sleep function with exponential backoff for rate limiting
-        async function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
-        }
-        
-        // Handle RPC errors with exponential backoff
-        async function handleRpcError(error, retryFn) {
-            console.error('RPC error:', error);
-            
-            // Check if it's a rate limit error
-            if (error.message && (error.message.includes('429') || error.message.includes('Too many requests'))) {
-                updateStatus('RPC rate limit reached. Retrying...');
-                
-                // Increase backoff time with each retry (exponential backoff)
-                rpcTracking.backoffTime = Math.min(rpcTracking.backoffTime * 2, rpcTracking.maxBackoffTime);
-                console.log(`Backing off for ${rpcTracking.backoffTime}ms before retry`);
-                
-                await sleep(rpcTracking.backoffTime);
-                
-                // Try again
-                if (retryFn) {
-                    return await retryFn();
-                }
-            } else {
-                // For other errors, just wait a bit
-                await sleep(1000);
-                
-                if (retryFn) {
-                    return await retryFn();
-                }
-            }
-            
-            // Return null if no retry function provided or retry failed
-            return null;
-        }
-        
-        // Initialize connection to Solana with the better RPC endpoint
+        // Initialize connection to Solana
         async function initConnection() {
             try {
                 console.log('Connecting to Solana RPC:', RPC_ENDPOINT);
@@ -709,7 +632,6 @@
                     return true;
                 } catch (fallbackError) {
                     console.error('Fallback RPC error:', fallbackError);
-                    updateStatus('Failed to connect to Solana. Please refresh.');
                     return false;
                 }
             }
@@ -838,3 +760,74 @@
             } else {
                 hideTooltip();
             }
+        });
+        
+        canvas.addEventListener('mouseout', hideTooltip);
+        
+        // Add zoom functionality
+        document.getElementById('canvas-container').addEventListener('wheel', function(e) {
+            e.preventDefault();
+            
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            currentScale = Math.max(0.5, Math.min(5, currentScale * delta));
+            
+            canvas.style.transform = `scale(${currentScale})`;
+        });
+        
+        function connectWallet() {
+            try {
+                const { solana } = window;
+                if (!solana || !solana.isPhantom) {
+                    alert('Phantom wallet not installed!');
+                    return;
+                }
+                
+                updateStatus('Connecting to wallet...');
+                
+                solana.connect()
+                    .then(response => {
+                        walletAddress = response.publicKey.toString();
+                        walletAddressSpan.textContent = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
+                        connectWalletBtn.textContent = 'Connected';
+                        connectWalletBtn.disabled = true;
+                        connectedIndicator.style.display = 'inline-block';
+                        placePixelBtn.disabled = false;
+                        updateStatus('Wallet connected!');
+                        
+                        checkBalance();
+                    })
+                    .catch(error => {
+                        updateStatus(`Error: ${error.message}`);
+                    });
+            } catch (error) {
+                updateStatus(`Error: ${error.message}`);
+            }
+        }
+        
+        async function checkBalance() {
+            if (!walletAddress) return;
+            
+            balanceSpan.textContent = 'Loading...';
+            try {
+                const response = await fetch(`${API_URL}/balance/${walletAddress}`);
+                const data = await response.json();
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                balanceSpan.textContent = formatBalance(data.formatted);
+            } catch (error) {
+                console.error('Balance check error:', error);
+                balanceSpan.textContent = '0';
+            }
+        }
+        
+        async function getAssociatedTokenAddress(mint, owner) {
+            const [address] = await solanaWeb3.PublicKey.findProgramAddress(
+                [
+                    owner.toBuffer(),
+                    TOKEN_PROGRAM_ID.toBuffer(),
+                    mint.toBuffer(),
+                ],
+                ASSOCIATED_TOKEN_PROGRAM_ID
+            );
+            return address;
