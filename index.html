@@ -623,10 +623,10 @@
                             
                             updatePixel(data.x, data.y, data.color);
                             
-                            if (!data.self) { // Only update burn counter for other users' pixels
-                                totalBurned += COST_PER_PIXEL;
-                                updateBurnedDisplay();
-                            }
+                            // Always update burn counter by 100 tokens for every pixel placement
+                            // This ensures it increments for all pixel placements
+                            totalBurned += COST_PER_PIXEL;
+                            updateBurnedDisplay();
                         }
                     } catch (error) {
                         console.error('Error processing message:', error);
@@ -877,26 +877,15 @@
             
             balanceSpan.textContent = 'Loading...';
             try {
-                // Try using server-side balance check first
-                const response = await fetch(`${API_URL}/balance/${walletAddress}`);
-                const data = await response.json();
+                // Always use the correct token address for balance checks
+                const PLACE_TOKEN_ADDRESS = new solanaWeb3.PublicKey(SPLACE_TOKEN);
                 
-                if (data.error) {
-                    throw new Error(data.error);
-                }
-                
-                balanceSpan.textContent = formatBalance(data.formatted);
-                
-            } catch (error) {
-                console.error('Balance check error:', error);
-                
-                // If server fails, try direct RPC call
                 try {
-                    const tokenMint = new solanaWeb3.PublicKey(SPLACE_TOKEN);
+                    // Try using direct RPC call with the specific SPL token address
                     const ownerPubkey = new solanaWeb3.PublicKey(walletAddress);
                     
                     const associatedTokenAddress = await getAssociatedTokenAddress(
-                        tokenMint,
+                        PLACE_TOKEN_ADDRESS,
                         ownerPubkey
                     );
                     
@@ -908,14 +897,29 @@
                         const dataView = new DataView(data.buffer, 64, 8);
                         const amount = dataView.getBigUint64(0, true);
                         
+                        // Format balance to display the actual token amount (accounting for decimals)
+                        const actualAmount = Number(amount) / Math.pow(10, TOKEN_DECIMALS);
                         balanceSpan.textContent = formatBalance(Number(amount));
+                        console.log(`Wallet has ${actualAmount} $PLACE tokens`);
                     } else {
                         balanceSpan.textContent = '0';
                     }
                 } catch (directError) {
                     console.error('Direct balance check error:', directError);
-                    balanceSpan.textContent = '0';
+                    
+                    // Fall back to server-side balance check if direct check fails
+                    const response = await fetch(`${API_URL}/balance/${walletAddress}`);
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
+                    
+                    balanceSpan.textContent = formatBalance(data.formatted);
                 }
+            } catch (error) {
+                console.error('Balance check error:', error);
+                balanceSpan.textContent = '0';
             }
         }
         
@@ -1076,6 +1080,11 @@
                 
                 // Update visual display
                 updatePixel(selectedPixel.x, selectedPixel.y, color);
+                
+                // Increment the burn counter by 100 tokens each time a pixel is placed
+                totalBurned += COST_PER_PIXEL;
+                updateBurnedDisplay();
+                
                 updateStatus('Pixel placed! Syncing with server...');
                 
                 // Send via WebSocket for real-time updates to other clients
@@ -1133,9 +1142,7 @@
                             updateStatus('Pixel placed successfully!');
                             serverSynced = true;
                             
-                            // Update local burn counter and check balance
-                            totalBurned += COST_PER_PIXEL;
-                            updateBurnedDisplay();
+                            // Check balance after successful placement to update UI
                             checkBalance();
                             
                             // Refresh canvas state to ensure everything is in sync
@@ -1205,9 +1212,7 @@
                             updateStatus('Pixel placed successfully!');
                             serverSynced = true;
                             
-                            // Update local state
-                            totalBurned += COST_PER_PIXEL;
-                            updateBurnedDisplay();
+                            // Check balance again
                             checkBalance();
                         } else {
                             throw new Error(data.error || 'Recovery failed');
