@@ -551,7 +551,7 @@
             ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
         
-        // Initialize WebSocket with reconnection logic
+        // Initialize WebSocket
         function initWebSocket() {
             try {
                 console.log('Connecting to WebSocket server...');
@@ -1072,10 +1072,14 @@
                     timestamp: timestamp
                 };
                 
-                // Send HTTP request with retry
+                // Send HTTP request with retry - updated version with better error handling
                 let serverSynced = false;
-                for (let attempt = 1; attempt <= 3; attempt++) {
+                let lastErrorMessage = null;
+
+                for (let attempt = 1; attempt <= 5; attempt++) { // Increased to 5 attempts
                     try {
+                        console.log(`Server sync attempt ${attempt}/5`);
+                        
                         const response = await fetch(`${API_URL}/place-pixel`, {
                             method: 'POST',
                             headers: {
@@ -1083,6 +1087,11 @@
                             },
                             body: JSON.stringify(pixelData)
                         });
+                        
+                        // Handle non-200 status codes
+                        if (!response.ok) {
+                            throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+                        }
                         
                         const data = await response.json();
                         
@@ -1108,27 +1117,72 @@
                             
                             break; // Successfully synced, exit retry loop
                         } else {
-                            console.error('Server error:', data.error);
-                            if (attempt < 3) {
-                                const retryDelay = 1000 * attempt;
-                                console.log(`Retrying server sync in ${retryDelay}ms (attempt ${attempt}/3)`);
+                            // Server returned success: false with an error message
+                            lastErrorMessage = data.error || 'Unknown server error';
+                            console.error('Server error:', lastErrorMessage);
+                            
+                            // Use longer delays for later attempts
+                            if (attempt < 5) {
+                                const retryDelay = Math.min(1000 * Math.pow(2, attempt - 1), 15000);
+                                console.log(`Retrying server sync in ${retryDelay}ms (attempt ${attempt}/5)`);
+                                updateStatus(`Server sync failed. Retrying in ${retryDelay/1000}s...`);
                                 await new Promise(resolve => setTimeout(resolve, retryDelay));
                             }
                         }
                     } catch (fetchError) {
-                        console.error(`HTTP error (attempt ${attempt}/3):`, fetchError);
-                        if (attempt < 3) {
-                            const retryDelay = 1000 * attempt;
+                        lastErrorMessage = fetchError.message;
+                        console.error(`HTTP error (attempt ${attempt}/5):`, fetchError);
+                        
+                        if (attempt < 5) {
+                            const retryDelay = Math.min(1000 * Math.pow(2, attempt - 1), 15000);
                             console.log(`Retrying server sync in ${retryDelay}ms`);
+                            updateStatus(`Server connection error. Retrying in ${retryDelay/1000}s...`);
                             await new Promise(resolve => setTimeout(resolve, retryDelay));
                         }
                     }
                 }
-                
-                // If we couldn't sync with the server after all retries
+
+                // Special manual recovery attempt if all auto-retries failed
                 if (!serverSynced) {
-                    updateStatus('Warning: Pixel visible but server sync failed. It may disappear on refresh.');
-                    console.log('Failed to sync pixel with server after multiple attempts');
+                    updateStatus(`Server sync failed: ${lastErrorMessage || 'Unknown error'}. Attempting recovery...`);
+                    
+                    try {
+                        // Wait a bit longer (10s) and try one last time with a different approach
+                        await new Promise(resolve => setTimeout(resolve, 10000));
+                        
+                        // Try a different endpoint variation - sometimes this can help with caching issues
+                        const finalAttemptUrl = `${API_URL}/place-pixel?t=${Date.now()}`;
+                        const response = await fetch(finalAttemptUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Cache-Control': 'no-cache',
+                                'Pragma': 'no-cache'
+                            },
+                            body: JSON.stringify({
+                                ...pixelData,
+                                timestamp: Date.now() // Update timestamp
+                            })
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            console.log('Recovery attempt succeeded!');
+                            updateStatus('Pixel placed successfully!');
+                            serverSynced = true;
+                            
+                            // Update local state
+                            totalBurned += COST_PER_PIXEL;
+                            updateBurnedDisplay();
+                            checkBalance();
+                        } else {
+                            throw new Error(data.error || 'Recovery failed');
+                        }
+                    } catch (recoveryError) {
+                        console.error('Recovery attempt failed:', recoveryError);
+                        updateStatus('Warning: Transaction confirmed but server sync failed. The pixel may not persist.');
+                    }
                 }
                 
             } catch (error) {
