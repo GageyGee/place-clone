@@ -58,6 +58,22 @@
             overflow-y: auto;
         }
         
+        .logo-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .twitter-icon {
+            color: #ffffff;
+            font-size: 24px;
+            transition: color 0.2s ease;
+        }
+        
+        .twitter-icon:hover {
+            color: #1DA1F2;
+        }
+        
         .logo {
             font-size: 32px;
             font-weight: 700;
@@ -432,9 +448,17 @@
             <canvas id="canvas" width="500" height="500" onclick="canvasClick(event)"></canvas>
         </div>
         <div id="sidebar">
-            <div>
-                <h1 class="logo">SolPlace</h1>
-                <p style="color: #666; font-size: 14px;">Collaborative pixel art on Solana, inspired by r/place.</p>
+            <div class="logo-container">
+                <div>
+                    <h1 class="logo">SolPlace</h1>
+                    <p style="color: #666; font-size: 14px;">Collaborative pixel art on Solana, inspired by r/place.</p>
+                </div>
+                <a href="https://x.com/SolPlace_io" target="_blank" class="twitter-icon" title="Follow us on X/Twitter">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M7 20l4.55-4.55c.88-.88 1.32-1.32 1.45-1.85.1-.44.1-.9 0-1.35-.13-.53-.57-.97-1.45-1.85L7 7"></path>
+                        <path d="M17 20V7"></path>
+                    </svg>
+                </a>
             </div>
             
             <div class="card">
@@ -526,6 +550,9 @@
             
             <h3>Deflationary Mechanism</h3>
             <p>Every pixel placement burns 100 $PLACE tokens, removing them from circulation and increasing scarcity over time.</p>
+            
+            <h3>Dev Allocation</h3>
+            <p>The development team holds 2% of the token supply, which is locked for 3 months and then vested over a period of 1 year. These funds will be used to cover server costs, scaling infrastructure, and future feature development.</p>
             
             <h3>Tips</h3>
             <ul>
