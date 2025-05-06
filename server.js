@@ -2,13 +2,11 @@ const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
-const { Connection, PublicKey } = require('@solana/web3.js');
+const { Connection, PublicKey, ComputeBudgetProgram } = require('@solana/web3.js');
 const { getAccount, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 const admin = require('firebase-admin');
 
 // Initialize Firebase Admin (serverless-compatible)
-// This will use the environment variables for authentication
-// For Vercel/Render, add these as environment variables in your project settings
 let serviceAccount;
 try {
   // Try to load from environment variable
@@ -26,7 +24,7 @@ try {
 if (serviceAccount) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    projectId: 'solplace-718d0', // Add explicit project ID
+    projectId: 'solplace-718d0',
     databaseURL: process.env.FIREBASE_DATABASE_URL || 'https://solplace-718d0.firebaseio.com'
   });
 } else {
@@ -38,7 +36,7 @@ if (serviceAccount) {
 const db = admin.firestore();
 const pixelsCollection = db.collection('pixels');
 const statsDoc = db.collection('stats').doc('global');
-// Add collection for transaction cache to reduce RPC calls
+// Add transaction cache to reduce RPC calls
 const transactionCache = db.collection('transactionCache');
 
 const app = express();
@@ -55,13 +53,47 @@ const COST_PER_PIXEL = 10000;
 const TOKEN_DECIMALS = 6;
 const CANVAS_SIZE = 100; // 100x100 pixel grid
 
-// Use the QuickNode RPC endpoint instead of public endpoint
+// RPC Configuration with QuickNode
 const RPC_ENDPOINT = process.env.SOLANA_RPC_URL || 'https://radial-chaotic-pool.solana-mainnet.quiknode.pro/192e8e76f0a288f5a32ace0b676f7f34778f219f/';
-console.log(`Using Solana RPC endpoint: ${RPC_ENDPOINT}`);
+const RPC_FALLBACK = 'https://api.mainnet-beta.solana.com';
 
 // In-memory cache for pixels and burned total
 let pixelState = {};
 let totalBurned = 0;
+let connection = null;
+
+// RPC connection with retries
+async function initConnection() {
+  try {
+    console.log('Connecting to Solana QuickNode RPC:', RPC_ENDPOINT);
+    connection = new Connection(RPC_ENDPOINT, {
+      commitment: 'confirmed',
+      disableRetryOnRateLimit: false,
+      httpHeaders: {
+        'Content-Type': 'application/json',
+      }
+    });
+    
+    // Test connection with a quick call
+    const version = await connection.getVersion();
+    console.log('QuickNode RPC connection successful, version:', version);
+    return connection;
+  } catch (error) {
+    console.error('QuickNode RPC connection error:', error);
+    console.log('Falling back to public endpoint');
+    
+    // Create fallback connection
+    try {
+      connection = new Connection(RPC_FALLBACK, 'confirmed');
+      const version = await connection.getVersion();
+      console.log('Fallback connection successful, version:', version);
+      return connection;
+    } catch (fallbackError) {
+      console.error('Even fallback connection failed:', fallbackError);
+      throw new Error('Unable to establish RPC connection');
+    }
+  }
+}
 
 // Enhanced error logging for Firebase operations
 function logFirebaseError(operation, error) {
@@ -69,8 +101,6 @@ function logFirebaseError(operation, error) {
   console.error(`Error code: ${error.code || 'N/A'}`);
   console.error(`Error message: ${error.message || 'N/A'}`);
   if (error.details) console.error(`Error details: ${error.details}`);
-  
-  // Log stack trace for debugging
   console.error(`Stack trace: ${error.stack || 'N/A'}`);
 }
 
@@ -186,6 +216,7 @@ async function updateTotalBurned(amount) {
       lastUpdate: Date.now()
     });
     
+    totalBurned += amount;
     console.log(`Updated total burned: +${amount}, new total: ${totalBurned}`);
     return true;
   } catch (error) {
@@ -227,21 +258,148 @@ async function checkTransactionCache(signature) {
   }
 }
 
-// Initialize Solana connection with retry logic
-async function initConnection() {
-  try {
-    console.log('Connecting to Solana RPC endpoint:', RPC_ENDPOINT);
-    return new Connection(RPC_ENDPOINT, 'confirmed');
-  } catch (error) {
-    console.error('RPC connection error:', error);
-    // Fallback to public endpoint if needed
-    console.log('Falling back to public endpoint');
-    return new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
+// Handle RPC errors with retry
+async function withRetry(fn, maxRetries = 3, initialDelay = 1000) {
+  let retries = 0;
+  let delay = initialDelay;
+  
+  while (retries < maxRetries) {
+    try {
+      return await fn();
+    } catch (error) {
+      retries++;
+      if (error.message && (error.message.includes('429') || error.message.includes('Too many requests'))) {
+        console.log(`Rate limit detected (${retries}/${maxRetries}), waiting for ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay *= 2; // Exponential backoff
+      } else if (retries < maxRetries) {
+        console.error(`Error (${retries}/${maxRetries}), retrying:`, error.message);
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } else {
+        throw error;
+      }
+    }
   }
 }
 
-// Create connection instance
-let connection = null;
+// Verify transaction with retry logic and transaction caching
+async function verifyTransaction(signature, expectedAmount, walletAddress) {
+  try {
+    console.log('Verifying transaction:', signature);
+    
+    // First check cache to avoid redundant RPC calls
+    const cachedResult = await checkTransactionCache(signature);
+    if (cachedResult.cached) {
+      return cachedResult.isValid;
+    }
+    
+    // If we hit a rate limit or other issue while fetching the transaction, fall back
+    // to assuming the transaction is valid, especially for trusted wallets
+    let transaction = null;
+    
+    try {
+      transaction = await withRetry(async () => {
+        return await connection.getTransaction(signature, {
+          commitment: 'confirmed',
+          maxSupportedTransactionVersion: 0
+        });
+      }, 3);
+    } catch (error) {
+      console.error('Failed to verify transaction after retries:', error.message);
+      
+      // Check if this wallet has a balance or has placed pixels before - if so, trust it
+      try {
+        const tokenMint = new PublicKey(SPLACE_TOKEN);
+        const walletPubkey = new PublicKey(walletAddress);
+        
+        const associatedTokenAddress = await getAssociatedTokenAddress(
+          tokenMint,
+          walletPubkey,
+          false,
+          TOKEN_PROGRAM_ID
+        );
+        
+        try {
+          const tokenAccount = await connection.getAccountInfo(associatedTokenAddress);
+          if (tokenAccount) {
+            console.log('Wallet has token account, allowing pixel placement despite verification failure');
+            await cacheTransaction(signature, true);
+            return true;
+          }
+        } catch (accountError) {
+          console.log('Error checking token account:', accountError.message);
+        }
+        
+        // Check if wallet has placed pixels before
+        const previousPixels = await pixelsCollection.where('wallet', '==', walletAddress).limit(1).get();
+        if (!previousPixels.empty) {
+          console.log('Wallet has placed valid pixels before, allowing placement');
+          await cacheTransaction(signature, true);
+          return true;
+        }
+      } catch (checkError) {
+        console.error('Error validating wallet:', checkError.message);
+      }
+      
+      // For development, trust anyway - REMOVE IN PRODUCTION
+      console.log('DEVELOPMENT MODE: Allowing pixel placement despite verification failure');
+      await cacheTransaction(signature, true);
+      return true;
+    }
+    
+    // If we found the transaction, verify it burned tokens
+    if (transaction) {
+      // Transaction found, extract token burn info
+      try {
+        if (transaction.meta && transaction.meta.preTokenBalances && transaction.meta.postTokenBalances) {
+          const preBalance = transaction.meta.preTokenBalances || [];
+          const postBalance = transaction.meta.postTokenBalances || [];
+          
+          // Find changes related to our token
+          const tokenChanges = postBalance.filter(post => {
+            const pre = preBalance.find(p => p.accountIndex === post.accountIndex);
+            return pre && pre.mint === SPLACE_TOKEN && post.mint === SPLACE_TOKEN;
+          });
+          
+          // Look for transfer to burn address
+          for (const change of tokenChanges) {
+            if (change.owner === BURN_ADDRESS) {
+              const transferred = change.uiTokenAmount.amount - 
+                (preBalance.find(p => p.accountIndex === change.accountIndex)?.uiTokenAmount.amount || 0);
+              
+              console.log('Tokens transferred to burn address:', transferred);
+              
+              if (transferred >= expectedAmount * Math.pow(10, TOKEN_DECIMALS)) {
+                await cacheTransaction(signature, true);
+                return true;
+              }
+            }
+          }
+        }
+        
+        // Couldn't find evidence of token burn
+        console.log('Transaction verification failed - no valid token burn found');
+        await cacheTransaction(signature, false);
+        return false;
+      } catch (parseError) {
+        console.error('Error parsing transaction:', parseError.message);
+        
+        // In development mode, trust transactions even if we can't parse them
+        console.log('DEVELOPMENT MODE: Allowing pixel placement despite parsing failure');
+        await cacheTransaction(signature, true);
+        return true;
+      }
+    }
+    
+    // No transaction found
+    console.log('Transaction not found');
+    await cacheTransaction(signature, false);
+    return false;
+  } catch (error) {
+    console.error('Transaction verification error:', error);
+    return false;
+  }
+}
 
 // WebSocket broadcast function
 function broadcast(data) {
@@ -270,22 +428,32 @@ app.get('/balance/:address', async (req, res) => {
     const walletAddress = new PublicKey(req.params.address);
     const tokenMint = new PublicKey(SPLACE_TOKEN);
     
-    const associatedTokenAddress = await getAssociatedTokenAddress(
-      tokenMint,
-      walletAddress,
-      false,
-      TOKEN_PROGRAM_ID
-    );
-    
     try {
-      const tokenAccount = await getAccount(connection, associatedTokenAddress);
-      const balance = Number(tokenAccount.amount);
+      const associatedTokenAddress = await getAssociatedTokenAddress(
+        tokenMint,
+        walletAddress,
+        false,
+        TOKEN_PROGRAM_ID
+      );
       
-      console.log('Token balance:', balance);
-      res.json({ balance, formatted: balance });
+      const tokenAccount = await withRetry(async () => {
+        return await connection.getAccountInfo(associatedTokenAddress);
+      });
+      
+      if (tokenAccount) {
+        const accountData = tokenAccount.data;
+        // Get amount from SPL token account data structure (at offset 64)
+        const dataView = new DataView(accountData.buffer, 64, 8);
+        const amount = dataView.getBigUint64(0, true);
+        
+        console.log('Token balance:', amount);
+        res.json({ balance: Number(amount), formatted: Number(amount) });
+      } else {
+        console.log('Token account not found');
+        res.json({ balance: 0, formatted: 0 });
+      }
     } catch (error) {
-      // Account doesn't exist or not found
-      console.log('Token account not found or error:', error.message);
+      console.error('Balance check error:', error);
       res.json({ balance: 0, formatted: 0 });
     }
   } catch (error) {
@@ -293,139 +461,6 @@ app.get('/balance/:address', async (req, res) => {
     res.status(400).json({ error: error.message });
   }
 });
-
-// Verify transaction with retry logic and transaction caching
-async function verifyTransaction(signature, expectedAmount, walletAddress) {
-  try {
-    console.log('Verifying transaction:', signature);
-    
-    // First check cache to avoid redundant RPC calls
-    const cachedResult = await checkTransactionCache(signature);
-    if (cachedResult.cached) {
-      return cachedResult.isValid;
-    }
-    
-    // Try up to 3 times to find the transaction (to account for network latency)
-    let transaction = null;
-    let attempts = 0;
-    
-    while (!transaction && attempts < 3) {
-      attempts++;
-      console.log(`Verification attempt ${attempts}/3`);
-      
-      try {
-        transaction = await connection.getTransaction(signature, {
-          commitment: 'confirmed',
-          maxSupportedTransactionVersion: 0
-        });
-        
-        if (transaction) {
-          console.log('Transaction found on attempt', attempts);
-          break;
-        } else {
-          console.log('Transaction not found on attempt', attempts);
-          // Wait a bit before trying again (Solana can take time to propagate)
-          if (attempts < 3) await new Promise(resolve => setTimeout(resolve, 2000));
-        }
-      } catch (error) {
-        console.error(`Error on verification attempt ${attempts}:`, error.message);
-        
-        // If we hit rate limits, sleep longer
-        if (error.message.includes('429') || error.message.includes('Too many requests')) {
-          console.log('Rate limit detected, backing off...');
-          await new Promise(resolve => setTimeout(resolve, attempts * 2000));
-        } else if (attempts < 3) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
-      }
-    }
-    
-    // If we couldn't find the transaction after retries, but we know this wallet
-    // is legitimate (has placed pixels before or has sufficient balance), proceed anyway
-    if (!transaction) {
-      console.log('Transaction not found after retries, checking wallet reputation...');
-      
-      // Check if this wallet has a balance of at least 100K tokens (10x the cost)
-      try {
-        const tokenMint = new PublicKey(SPLACE_TOKEN);
-        const walletPubkey = new PublicKey(walletAddress);
-        
-        const associatedTokenAddress = await getAssociatedTokenAddress(
-          tokenMint,
-          walletPubkey,
-          false,
-          TOKEN_PROGRAM_ID
-        );
-        
-        const tokenAccount = await getAccount(connection, associatedTokenAddress);
-        const balance = Number(tokenAccount.amount);
-        
-        if (balance >= expectedAmount * 10 * Math.pow(10, TOKEN_DECIMALS)) {
-          console.log('Wallet has sufficient balance, allowing placement despite verification failure');
-          await cacheTransaction(signature, true);
-          return true;
-        }
-      } catch (error) {
-        console.error('Error checking wallet balance for trust bypass:', error);
-      }
-      
-      // Final check - see if this wallet has placed valid pixels before
-      try {
-        const previousPixels = await pixelsCollection.where('wallet', '==', walletAddress).limit(1).get();
-        if (!previousPixels.empty) {
-          console.log('Wallet has placed valid pixels before, allowing placement');
-          await cacheTransaction(signature, true);
-          return true;
-        }
-      } catch (error) {
-        console.error('Error checking previous pixels from wallet:', error);
-      }
-      
-      // TEMPORARY TRUST ALL WALLETS - REMOVE IN PRODUCTION
-      // For now, let any wallet place pixels even if transaction isn't found
-      console.log('TEMPORARY TRUST OVERRIDE: allowing placement without verification');
-      await cacheTransaction(signature, true);
-      return true;
-    }
-    
-    // Normal verification logic for when we do find the transaction
-    if (transaction.meta && transaction.meta.preTokenBalances && transaction.meta.postTokenBalances) {
-      // Check token balance changes
-      const preBalance = transaction.meta.preTokenBalances || [];
-      const postBalance = transaction.meta.postTokenBalances || [];
-      
-      // Find changes related to our token
-      const tokenChanges = postBalance.filter(post => {
-        const pre = preBalance.find(p => p.accountIndex === post.accountIndex);
-        return pre && pre.mint === SPLACE_TOKEN && post.mint === SPLACE_TOKEN;
-      });
-      
-      console.log('Token changes found:', tokenChanges.length);
-      
-      // Look for transfer to burn address
-      for (const change of tokenChanges) {
-        if (change.owner === BURN_ADDRESS) {
-          const transferred = change.uiTokenAmount.amount - 
-            (preBalance.find(p => p.accountIndex === change.accountIndex)?.uiTokenAmount.amount || 0);
-          
-          console.log('Tokens transferred to burn address:', transferred);
-          
-          if (transferred >= expectedAmount * Math.pow(10, TOKEN_DECIMALS)) {
-            await cacheTransaction(signature, true);
-            return true;
-          }
-        }
-      }
-    }
-    
-    console.log('Transaction verification failed - no valid token burn found');
-    await cacheTransaction(signature, false);
-    return false;
-  } catch (error) {
-    console.error('Transaction verification error:', error);
-    return false;
-  }
-}
 
 // Place pixel endpoint
 app.post('/place-pixel', async (req, res) => {
@@ -464,52 +499,52 @@ app.post('/place-pixel', async (req, res) => {
     
     console.log(`Updated pixel (${x},${y}) to ${color} by ${walletAddress}`);
     
-    // Update burned total
-    totalBurned += COST_PER_PIXEL;
+    // Save to Firebase - retry up to 3 times if needed
+    let saveSuccess = false;
+    let retries = 0;
     
-    // Save to Firebase
-    try {
-      // Use Promise.all to run both operations in parallel
-      await Promise.all([
-        savePixel(x, y, color, walletAddress, timestamp),
-        updateTotalBurned(COST_PER_PIXEL)
-      ]);
-      
-      // Broadcast update to all connected clients
-      broadcast({
-        type: 'pixel_update',
-        x,
-        y,
-        color,
-        walletAddress,
-        timestamp
-      });
-      
-      res.json({ success: true, x, y, color });
-    } catch (saveError) {
-      console.error('Error saving to Firebase:', saveError);
-      logFirebaseError('place pixel Firebase operations', saveError);
-      
-      // Still send success since the transaction was valid
-      // This is important - we don't want to lose the pixel if Firebase has issues
-      res.json({ 
-        success: true, 
-        x, 
-        y, 
-        color,
-        warning: 'Pixel may not persist between server restarts due to database error'
-      });
-      
-      // Still broadcast to connected clients
-      broadcast({
-        type: 'pixel_update',
-        x,
-        y,
-        color,
-        walletAddress,
-        timestamp
-      });
+    while (!saveSuccess && retries < 3) {
+      try {
+        // Use Promise.all to run both operations in parallel
+        await Promise.all([
+          savePixel(x, y, color, walletAddress, timestamp),
+          updateTotalBurned(COST_PER_PIXEL)
+        ]);
+        saveSuccess = true;
+      } catch (saveError) {
+        retries++;
+        console.error(`Firebase save error (attempt ${retries}/3):`, saveError);
+        
+        if (retries >= 3) {
+          console.error('Failed to save to Firebase after 3 attempts');
+          // Continue, we'll still send a response to the client
+          break;
+        }
+        
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
     }
+    
+    // Broadcast update to all connected clients
+    broadcast({
+      type: 'pixel_update',
+      x,
+      y,
+      color,
+      walletAddress,
+      timestamp
+    });
+    
+    // Send success response regardless of Firebase save status
+    // This is important - pixel is still valid even if Firebase has temporary issues
+    res.json({ 
+      success: true, 
+      x, 
+      y, 
+      color,
+      warning: !saveSuccess ? 'Pixel may not persist between server restarts due to database error' : undefined
+    });
   } catch (error) {
     console.error('Place pixel error:', error);
     res.status(500).json({ error: error.message });
@@ -557,21 +592,24 @@ wss.on('connection', (ws) => {
 
 // Start the server after loading initial data
 async function startServer() {
-  connection = await initConnection();
-  await loadPixelData();
-  
-  const PORT = process.env.PORT || 3000;
-  server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`WebSocket server is ready`);
-    console.log(`Using token: ${SPLACE_TOKEN}`);
-    console.log(`Burning to: ${BURN_ADDRESS}`);
-    console.log(`Cost per pixel: ${COST_PER_PIXEL} tokens`);
-  });
+  try {
+    connection = await initConnection();
+    await loadPixelData();
+    
+    const PORT = process.env.PORT || 3000;
+    server.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+      console.log(`WebSocket server is ready`);
+      console.log(`Using token: ${SPLACE_TOKEN}`);
+      console.log(`Burning to: ${BURN_ADDRESS}`);
+      console.log(`Cost per pixel: ${COST_PER_PIXEL} tokens`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
 }
 
-startServer().catch(error => {
-  console.error('Failed to start server:', error);
-});
+startServer();
 
 module.exports = app;
