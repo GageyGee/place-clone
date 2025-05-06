@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SolPlace - Pixel Art on Solana</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <style>
         * {
             margin: 0;
@@ -239,7 +240,7 @@
             opacity: 1;
         }
         
-        /* Modal styles */
+        /* Modal styles - Updated for better responsiveness */
         .modal {
             display: none;
             position: fixed;
@@ -258,10 +259,12 @@
             padding: 32px;
             border: 1px solid #333;
             border-radius: 16px;
-            width: 80%;
-            max-width: 600px;
+            width: 90%; /* Changed from 80% to 90% */
+            max-width: 800px; /* Increased from 600px to 800px */
             position: relative;
             animation: modalFadeIn 0.3s ease;
+            overflow-y: auto; /* Added scrolling for very small screens */
+            max-height: 90vh; /* Limit height to 90% of viewport height */
         }
         
         @keyframes modalFadeIn {
@@ -328,6 +331,32 @@
             font-size: 24px;
             margin-bottom: 8px;
         }
+        
+        /* Add these media queries for better responsiveness */
+        @media (max-width: 768px) {
+            .modal-content {
+                width: 95%;
+                padding: 20px;
+                margin: 2% auto;
+            }
+            
+            .feature-list {
+                grid-template-columns: 1fr; /* Stack features on small screens */
+            }
+            
+            #container {
+                flex-direction: column;
+            }
+            
+            #sidebar {
+                width: 100%;
+                max-height: 300px;
+            }
+            
+            #canvas-container {
+                height: calc(100vh - 300px);
+            }
+        }
 
         /* Tooltip styles */
         .pixel-tooltip {
@@ -376,21 +405,6 @@
         ::-webkit-scrollbar-thumb:hover {
             background: #444;
         }
-        
-        @media (max-width: 768px) {
-            #container {
-                flex-direction: column;
-            }
-            
-            #sidebar {
-                width: 100%;
-                max-height: 300px;
-            }
-            
-            #canvas-container {
-                height: calc(100vh - 300px);
-            }
-        }
     </style>
 </head>
 <body>
@@ -421,7 +435,7 @@
             <div class="stats">
                 <div class="stat-card">
                     <div class="stat-value" id="balance">0</div>
-                    <div class="stat-label">$SPLACE Balance</div>
+                    <div class="stat-label">$PLACE Balance</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-value">100</div>
@@ -431,7 +445,7 @@
             
             <div class="burn-stats">
                 <div class="burn-value" id="burned-amount">0</div>
-                <div class="burn-label">$SPLACE Burned Total</div>
+                <div class="burn-label">$PLACE Burned Total</div>
             </div>
             
             <button id="place-pixel" onclick="placePixel()" disabled>Place Pixel</button>
@@ -439,7 +453,7 @@
             <div id="status-message">Connect your wallet to start</div>
             
             <div class="footer-buttons">
-                <button id="contract-address-btn" onclick="copyContractAddress()">Copy $SPLACE CA</button>
+                <button id="contract-address-btn" onclick="copyContractAddress()">Copy $PLACE CA</button>
                 <button id="how-it-works-btn" onclick="showHowItWorks()">How It Works</button>
             </div>
         </div>
@@ -450,7 +464,7 @@
     <!-- Tooltip for pixel hover info -->
     <div id="pixel-tooltip" class="pixel-tooltip" style="display: none;"></div>
     
-    <!-- Modal -->
+    <!-- Modal - Updated content with PLACE token references -->
     <div id="how-it-works-modal" class="modal">
         <div class="modal-content">
             <span class="close" onclick="closeModal()">&times;</span>
@@ -461,14 +475,14 @@
             
             <ul>
                 <li>Connect your Phantom wallet</li>
-                <li>Ensure you have $SPLACE tokens</li>
+                <li>Ensure you have $PLACE tokens</li>
                 <li>Click any pixel on the canvas</li>
                 <li>Select your desired color</li>
-                <li>Pay 10,000 $SPLACE to place your pixel</li>
+                <li>Pay 100 $PLACE to place your pixel</li>
             </ul>
             
             <h3>Deflationary Mechanism</h3>
-            <p>Every pixel placement burns 10,000 $SPLACE tokens, making the token deflationary. The tokens are permanently removed from circulation, increasing scarcity over time.</p>
+            <p>Every pixel placement burns 100 $PLACE tokens, making the token deflationary. The tokens are permanently removed from circulation, increasing scarcity over time.</p>
             
             <h3>Features</h3>
             <div class="feature-list">
@@ -485,7 +499,7 @@
                 <div class="feature-item">
                     <div class="feature-icon">🔥</div>
                     <h4>Token Burning</h4>
-                    <p>Makes $SPLACE deflationary</p>
+                    <p>Makes $PLACE deflationary</p>
                 </div>
                 <div class="feature-item">
                     <div class="feature-icon">🌐</div>
@@ -498,7 +512,7 @@
             <ul>
                 <li>Use scroll to zoom in/out on the canvas</li>
                 <li>Collaborate with others to create art</li>
-                <li>Check your $SPLACE balance before placing multiple pixels</li>
+                <li>Check your $PLACE balance before placing multiple pixels</li>
                 <li>Be creative and respectful of others' work</li>
             </ul>
         </div>
@@ -513,7 +527,7 @@
         
         const SPLACE_TOKEN = '38KWMyCbPurCgqqwx5JG4EouREtjwcCaDqvL9KNGsvDf';
         const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111';
-        const COST_PER_PIXEL = 100;
+        const COST_PER_PIXEL = 100; // Updated from 10000 to 100
         const TOKEN_DECIMALS = 6;
         
         // Use your paid QuickNode RPC endpoint
