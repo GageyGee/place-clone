@@ -49,9 +49,9 @@ app.use(express.json());
 // Constants
 const SPLACE_TOKEN = '38KWMyCbPurCgqqwx5JG4EouREtjwcCaDqvL9KNGsvDf';
 const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111';
-const COST_PER_PIXEL = 10000;
+const COST_PER_PIXEL = 100;
 const TOKEN_DECIMALS = 6;
-const CANVAS_SIZE = 100; // 100x100 pixel grid
+const CANVAS_SIZE = 150; // 150x150 pixel grid
 
 // RPC Configuration with QuickNode
 const RPC_ENDPOINT = process.env.SOLANA_RPC_URL || 'https://radial-chaotic-pool.solana-mainnet.quiknode.pro/192e8e76f0a288f5a32ace0b676f7f34778f219f/';
