@@ -551,7 +551,7 @@
             ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
         
-        // Initialize WebSocket
+        // Initialize WebSocket with reconnection logic
         function initWebSocket() {
             try {
                 console.log('Connecting to WebSocket server...');
@@ -616,25 +616,60 @@
             }
         }
         
-        // Initialize connection to Solana
+        // Initialize connection to Solana with the QuickNode RPC
         async function initConnection() {
             try {
                 console.log('Connecting to Solana RPC:', RPC_ENDPOINT);
-                connection = new solanaWeb3.Connection(RPC_ENDPOINT, 'confirmed');
+                connection = new solanaWeb3.Connection(RPC_ENDPOINT, {
+                    commitment: 'confirmed',
+                    confirmTransactionInitialTimeout: 60000,
+                    disableRetryOnRateLimit: false
+                });
+                
+                // Test the connection
+                const version = await connection.getVersion();
+                console.log('Connected to Solana RPC, version:', version);
+                
                 return true;
             } catch (error) {
                 console.error('RPC connection error:', error);
+                
                 // Fallback to public endpoint
                 try {
                     const fallbackEndpoint = 'https://api.mainnet-beta.solana.com';
                     console.log('Falling back to public endpoint:', fallbackEndpoint);
                     connection = new solanaWeb3.Connection(fallbackEndpoint, 'confirmed');
+                    
                     return true;
                 } catch (fallbackError) {
                     console.error('Fallback RPC error:', fallbackError);
                     return false;
                 }
             }
+        }
+        
+        // Utility function to retry operations on errors
+        async function withRetry(fn, maxRetries = 3) {
+            let retries = 0;
+            let lastError = null;
+            
+            while (retries < maxRetries) {
+                try {
+                    return await fn();
+                } catch (error) {
+                    lastError = error;
+                    retries++;
+                    console.log(`Operation failed, retry ${retries}/${maxRetries}:`, error.message);
+                    
+                    // Exponential backoff
+                    if (retries < maxRetries) {
+                        const delay = Math.min(1000 * Math.pow(2, retries), 10000);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    }
+                }
+            }
+            
+            throw lastError;
         }
         
         // Canvas state functions with wallet info
@@ -809,28 +844,63 @@
             
             balanceSpan.textContent = 'Loading...';
             try {
+                // Try using server-side balance check first
                 const response = await fetch(`${API_URL}/balance/${walletAddress}`);
                 const data = await response.json();
+                
                 if (data.error) {
                     throw new Error(data.error);
                 }
+                
                 balanceSpan.textContent = formatBalance(data.formatted);
+                
             } catch (error) {
                 console.error('Balance check error:', error);
-                balanceSpan.textContent = '0';
+                
+                // If server fails, try direct RPC call
+                try {
+                    const tokenMint = new solanaWeb3.PublicKey(SPLACE_TOKEN);
+                    const ownerPubkey = new solanaWeb3.PublicKey(walletAddress);
+                    
+                    const associatedTokenAddress = await getAssociatedTokenAddress(
+                        tokenMint,
+                        ownerPubkey
+                    );
+                    
+                    const accountInfo = await connection.getAccountInfo(associatedTokenAddress);
+                    
+                    if (accountInfo) {
+                        const data = accountInfo.data;
+                        // Get amount from SPL token account data structure (at offset 64)
+                        const dataView = new DataView(data.buffer, 64, 8);
+                        const amount = dataView.getBigUint64(0, true);
+                        
+                        balanceSpan.textContent = formatBalance(Number(amount));
+                    } else {
+                        balanceSpan.textContent = '0';
+                    }
+                } catch (directError) {
+                    console.error('Direct balance check error:', directError);
+                    balanceSpan.textContent = '0';
+                }
             }
         }
         
         async function getAssociatedTokenAddress(mint, owner) {
-            const [address] = await solanaWeb3.PublicKey.findProgramAddress(
-                [
-                    owner.toBuffer(),
-                    TOKEN_PROGRAM_ID.toBuffer(),
-                    mint.toBuffer(),
-                ],
-                ASSOCIATED_TOKEN_PROGRAM_ID
-            );
-            return address;
+            try {
+                const [address] = await solanaWeb3.PublicKey.findProgramAddress(
+                    [
+                        owner.toBuffer(),
+                        TOKEN_PROGRAM_ID.toBuffer(),
+                        mint.toBuffer(),
+                    ],
+                    ASSOCIATED_TOKEN_PROGRAM_ID
+                );
+                return address;
+            } catch (error) {
+                console.error('Error getting associated token address:', error);
+                throw error;
+            }
         }
         
         function createTokenTransferInstruction(fromTokenAccount, toTokenAccount, owner, amount) {
@@ -868,6 +938,21 @@
             });
         }
         
+        // Add Compute Budget Program instructions for optimized fee and compute unit handling
+        function addPriorityFeeInstruction(transaction, priorityFee = 10000) {
+            const priorityFeeInstruction = solanaWeb3.ComputeBudgetProgram.setComputeUnitPrice({
+                microLamports: priorityFee
+            });
+            transaction.add(priorityFeeInstruction);
+        }
+        
+        function addComputeUnitLimitInstruction(transaction, computeUnitsLimit = 200000) {
+            const computeUnitLimitInstruction = solanaWeb3.ComputeBudgetProgram.setComputeUnitLimit({
+                units: computeUnitsLimit
+            });
+            transaction.add(computeUnitLimitInstruction);
+        }
+        
         async function placePixel() {
             if (!selectedPixel || !walletAddress) {
                 updateStatus('Please select a pixel and connect wallet');
@@ -881,32 +966,52 @@
                 const color = colorPicker.value;
                 const { solana } = window;
                 
-                const latestBlockhash = await connection.getLatestBlockhash();
+                // Get the latest blockhash - with retry
+                const latestBlockhash = await withRetry(async () => {
+                    return await connection.getLatestBlockhash();
+                });
                 
                 const mintPubkey = new solanaWeb3.PublicKey(SPLACE_TOKEN);
                 const ownerPubkey = new solanaWeb3.PublicKey(walletAddress);
                 const burnPubkey = new solanaWeb3.PublicKey(BURN_ADDRESS);
                 
-                const ownerTokenAccount = await getAssociatedTokenAddress(mintPubkey, ownerPubkey);
-                const burnTokenAccount = await getAssociatedTokenAddress(mintPubkey, burnPubkey);
+                // Get token accounts - with retry
+                const ownerTokenAccount = await withRetry(async () => {
+                    return await getAssociatedTokenAddress(mintPubkey, ownerPubkey);
+                });
                 
+                const burnTokenAccount = await withRetry(async () => {
+                    return await getAssociatedTokenAddress(mintPubkey, burnPubkey);
+                });
+                
+                // Create a new transaction with priority fee and compute limit instructions
                 const transaction = new solanaWeb3.Transaction();
                 
+                // Add priority fee and compute unit limit instructions
+                addPriorityFeeInstruction(transaction, 50000); // Higher priority fee
+                addComputeUnitLimitInstruction(transaction, 200000);
+                
+                // Check if burn account exists and create it if needed
+                let burnAccountExists = false;
                 try {
                     const burnAccountInfo = await connection.getAccountInfo(burnTokenAccount);
-                    if (!burnAccountInfo) {
-                        const createAccountInstruction = createAssociatedTokenAccountInstruction(
-                            ownerPubkey,
-                            burnTokenAccount,
-                            burnPubkey,
-                            mintPubkey
-                        );
-                        transaction.add(createAccountInstruction);
-                    }
+                    burnAccountExists = !!burnAccountInfo;
                 } catch (error) {
-                    console.log('Error checking burn account existence:', error);
+                    console.log('Error checking burn account:', error.message);
                 }
                 
+                if (!burnAccountExists) {
+                    console.log('Burn account does not exist, adding creation instruction');
+                    const createAccountInstruction = createAssociatedTokenAccountInstruction(
+                        ownerPubkey,
+                        burnTokenAccount,
+                        burnPubkey,
+                        mintPubkey
+                    );
+                    transaction.add(createAccountInstruction);
+                }
+                
+                // Create token transfer instruction
                 const amount = COST_PER_PIXEL * Math.pow(10, TOKEN_DECIMALS);
                 const transferInstruction = createTokenTransferInstruction(
                     ownerTokenAccount,
@@ -916,21 +1021,20 @@
                 );
                 
                 transaction.add(transferInstruction);
-                
                 transaction.recentBlockhash = latestBlockhash.blockhash;
                 transaction.feePayer = ownerPubkey;
                 
                 updateStatus('Waiting for wallet approval...');
                 
-                // Fix the destructuring issue that can cause "Cannot read property of undefined"
+                // Sign and send the transaction
                 const signResult = await solana.signAndSendTransaction(transaction);
                 const signature = signResult.signature;
                 console.log('Transaction signature:', signature);
                 
-                updateStatus('Transaction sent, processing...');
-                
-                // Update UI optimistically for better user experience
+                // Optimistically update the UI immediately
                 const timestamp = Date.now();
+                
+                // Update in-memory state first
                 pixelState[`${selectedPixel.x},${selectedPixel.y}`] = {
                     color: color,
                     wallet: walletAddress,
@@ -939,8 +1043,9 @@
                 
                 // Update visual display
                 updatePixel(selectedPixel.x, selectedPixel.y, color);
+                updateStatus('Pixel placed! Syncing with server...');
                 
-                // Send via WebSocket for real-time updates
+                // Send via WebSocket for real-time updates to other clients
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({
                         type: 'pixel_update',
@@ -954,7 +1059,7 @@
                     }));
                 }
                 
-                // Also send via HTTP for reliable server-side storage
+                // Prepare pixel data for server
                 const pixelData = {
                     x: selectedPixel.x,
                     y: selectedPixel.y,
@@ -967,43 +1072,65 @@
                     timestamp: timestamp
                 };
                 
-                try {
-                    const response = await fetch(`${API_URL}/place-pixel`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(pixelData)
-                    });
-                    
-                    const data = await response.json();
-                    
-                    if (data.success) {
-                        console.log('Pixel placement confirmed by server');
-                        updateStatus('Pixel placed successfully!');
+                // Send HTTP request with retry
+                let serverSynced = false;
+                for (let attempt = 1; attempt <= 3; attempt++) {
+                    try {
+                        const response = await fetch(`${API_URL}/place-pixel`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify(pixelData)
+                        });
                         
-                        // Request updated canvas state to ensure synchronization
-                        setTimeout(() => {
+                        const data = await response.json();
+                        
+                        if (data.success) {
+                            console.log('Pixel placement confirmed by server');
+                            updateStatus('Pixel placed successfully!');
+                            serverSynced = true;
+                            
+                            // Update local burn counter and check balance
+                            totalBurned += COST_PER_PIXEL;
+                            updateBurnedDisplay();
+                            checkBalance();
+                            
+                            // Refresh canvas state to ensure everything is in sync
                             if (ws && ws.readyState === WebSocket.OPEN) {
-                                ws.send(JSON.stringify({
-                                    type: 'get_canvas_state',
-                                    client: walletAddress
-                                }));
+                                setTimeout(() => {
+                                    ws.send(JSON.stringify({
+                                        type: 'get_canvas_state',
+                                        client: walletAddress
+                                    }));
+                                }, 2000);
                             }
-                        }, 1000);
-                    } else {
-                        console.error('Server error:', data.error);
-                        updateStatus('Warning: Pixel placed, but server sync failed');
+                            
+                            break; // Successfully synced, exit retry loop
+                        } else {
+                            console.error('Server error:', data.error);
+                            if (attempt < 3) {
+                                const retryDelay = 1000 * attempt;
+                                console.log(`Retrying server sync in ${retryDelay}ms (attempt ${attempt}/3)`);
+                                await new Promise(resolve => setTimeout(resolve, retryDelay));
+                            }
+                        }
+                    } catch (fetchError) {
+                        console.error(`HTTP error (attempt ${attempt}/3):`, fetchError);
+                        if (attempt < 3) {
+                            const retryDelay = 1000 * attempt;
+                            console.log(`Retrying server sync in ${retryDelay}ms`);
+                            await new Promise(resolve => setTimeout(resolve, retryDelay));
+                        }
                     }
-                } catch (fetchError) {
-                    console.error('HTTP error:', fetchError);
-                    updateStatus('Warning: Pixel visible but server sync failed');
                 }
                 
-                // Update local burn counter and check balance
-                totalBurned += COST_PER_PIXEL;
-                updateBurnedDisplay();
-                checkBalance();
+                // If we couldn't sync with the server after all retries
+                if (!serverSynced) {
+                    updateStatus('Warning: Pixel visible but server sync failed. It may disappear on refresh.');
+                    console.log('Failed to sync pixel with server after multiple attempts');
+                }
+                
             } catch (error) {
                 console.error('Transaction error:', error);
                 updateStatus(`Error: ${error.message}`);
@@ -1036,19 +1163,38 @@
             }
         };
         
-        // Initialize the app
+        // Initialize the app with better error handling
         async function initApp() {
             console.log('Initializing SolPlace app...');
             
             initCanvas();
-            const connected = await initConnection();
-            if (connected) {
-                console.log('RPC connected successfully');
-                initWebSocket();
-                updateStatus('Connect your wallet to start');
-            } else {
-                updateStatus('Error connecting to Solana. Please refresh.');
+            
+            // Connect to RPC with retries if needed
+            let connected = false;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                    connected = await initConnection();
+                    if (connected) {
+                        console.log('RPC connected successfully');
+                        break;
+                    }
+                } catch (error) {
+                    console.error(`RPC connection error (attempt ${attempt}/3):`, error);
+                    if (attempt < 3) {
+                        console.log(`Retrying connection in ${attempt * 1000}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+                    }
+                }
             }
+            
+            if (!connected) {
+                updateStatus('Error connecting to Solana. Please refresh.');
+                return;
+            }
+            
+            // Initialize WebSocket connection
+            initWebSocket();
+            updateStatus('Connect your wallet to start');
         }
         
         // Start the app when document is ready
