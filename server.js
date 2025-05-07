@@ -2,79 +2,41 @@ const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
-const fs = require('fs'); // Added fs module for reading secret files
 const { Connection, PublicKey, ComputeBudgetProgram } = require('@solana/web3.js');
 const { getAccount, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 const admin = require('firebase-admin');
 
-// Initialize Firebase Admin (using secret file approach)
+// Initialize Firebase Admin (serverless-compatible)
 let serviceAccount;
 try {
-  // Try to load from secret file path first (preferred method)
-  if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
-    try {
-      const rawData = fs.readFileSync(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
-      serviceAccount = JSON.parse(rawData);
-      console.log('Successfully loaded Firebase credentials from secret file');
-    } catch (fileError) {
-      console.error('Error loading credentials from file:', fileError);
-      console.error(fileError.stack);
-    }
-  } 
-  // Fall back to environment variable if file not available
-  else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    try {
-      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-      console.log('Successfully parsed Firebase service account from environment variable');
-    } catch (parseError) {
-      console.error('Failed to parse Firebase service account from environment variable:', parseError);
-      console.error(parseError.stack);
-    }
+  // Try to load from environment variable
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
+    // Or from a file path as fallback
+    serviceAccount = require(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
   }
 } catch (error) {
   console.error('Error loading Firebase credentials:', error);
-  console.error(error.stack);
 }
 
-// Initialize Firebase with project ID
+// Initialize Firebase
 if (serviceAccount) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    projectId: process.env.FIREBASE_PROJECT_ID || serviceAccount.project_id || 'solplace-718d0',
-    databaseURL: process.env.FIREBASE_DATABASE_URL || `https://${serviceAccount.project_id || 'solplace-718d0'}.firebaseio.com`
+    projectId: 'solplace-718d0', // Add explicit project ID
+    databaseURL: process.env.FIREBASE_DATABASE_URL || 'https://solplace-718d0.firebaseio.com'
   });
-  console.log('Firebase initialized with service account');
 } else {
   // Initialize with default config for development
   admin.initializeApp();
-  console.log('Firebase initialized with default configuration');
+  console.warn('WARNING: Using default Firebase configuration. Set FIREBASE_SERVICE_ACCOUNT env var for production.');
 }
 
-// Simple verification of Firebase setup
-try {
-  const db = admin.firestore();
-  console.log('Firestore database initialized');
-  
-  // Test ability to access Firestore
-  db.collection('_test_').doc('test').set({
-    timestamp: Date.now(),
-    message: 'Firebase connection test'
-  }, { merge: true })
-  .then(() => {
-    console.log('✅ FIREBASE CONNECTION TEST SUCCESSFUL!');
-    console.log('Created test document in Firestore');
-  })
-  .catch(error => {
-    console.error('❌ FIREBASE CONNECTION TEST FAILED:', error);
-  });
-} catch (dbError) {
-  console.error('Error initializing Firestore:', dbError);
-}
-
-// Firebase collections will be created automatically when first accessed
 const db = admin.firestore();
 const pixelsCollection = db.collection('pixels');
 const statsDoc = db.collection('stats').doc('global');
+// Add transaction cache to reduce RPC calls
 const transactionCache = db.collection('transactionCache');
 
 const app = express();
@@ -147,7 +109,7 @@ async function loadPixelData() {
   try {
     console.log('Loading pixel data from Firebase...');
     
-    // Get stats - will create this document if it doesn't exist
+    // Get stats
     const statsSnapshot = await statsDoc.get();
     if (statsSnapshot.exists) {
       const statsData = statsSnapshot.data();
@@ -162,7 +124,7 @@ async function loadPixelData() {
       console.log('Created new stats document');
     }
     
-    // Get all pixels - if none exist yet, this just returns an empty array
+    // Get all pixels
     const pixelsSnapshot = await pixelsCollection.get();
     pixelState = {};
     
@@ -226,7 +188,7 @@ function initializeEmptyCanvas() {
   }
 }
 
-// Save pixel to Firebase
+// Save pixel to Firebase with better error handling
 async function savePixel(x, y, color, wallet, timestamp) {
   try {
     const pixelId = `${x}_${y}`;
@@ -259,7 +221,6 @@ async function updateTotalBurned(amount) {
     return true;
   } catch (error) {
     logFirebaseError('update total burned', error);
-    totalBurned += amount; // Still update in memory even if Firebase fails
     return false;
   }
 }
@@ -616,16 +577,6 @@ app.post('/place-pixel', async (req, res) => {
     console.error('Place pixel error:', error);
     res.status(500).json({ error: error.message });
   }
-});
-
-// Health check endpoint (useful for Render)
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok',
-    firebase: !!db,
-    pixelsLoaded: Object.keys(pixelState).length > 0,
-    totalBurned: totalBurned
-  });
 });
 
 // WebSocket connection handler
