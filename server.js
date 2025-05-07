@@ -14,6 +14,13 @@ try {
     try {
       serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
       console.log('Successfully parsed Firebase service account');
+      
+      // Fix the private key format - IMPORTANT FIX
+      if (serviceAccount.private_key && serviceAccount.private_key.includes('\\n')) {
+        serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+        console.log('Fixed private key format for PEM');
+      }
+      
     } catch (parseError) {
       console.error('Failed to parse Firebase service account:', parseError);
       console.error(parseError.stack);
