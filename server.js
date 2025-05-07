@@ -5,159 +5,42 @@ const cors = require('cors');
 const { Connection, PublicKey, ComputeBudgetProgram } = require('@solana/web3.js');
 const { getAccount, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 const admin = require('firebase-admin');
-const fs = require('fs');
 
-// Initialize Firebase Admin (with enhanced support for secret files)
+// Initialize Firebase Admin (serverless-compatible)
 let serviceAccount;
 try {
   // Try to load from environment variable
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    try {
-      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-      console.log('Successfully parsed Firebase service account from environment variable');
-      
-      // Fix the private key format - IMPORTANT FIX
-      if (serviceAccount.private_key && serviceAccount.private_key.includes('\\n')) {
-        serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
-        console.log('Fixed private key format for PEM');
-      }
-    } catch (parseError) {
-      console.error('Failed to parse Firebase service account from environment variable:', parseError);
-      console.error(parseError.stack);
-    }
-  } 
-  // Try to load from secret file
-  else if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
-    try {
-      const credentialPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
-      if (fs.existsSync(credentialPath)) {
-        const credentialContent = fs.readFileSync(credentialPath, 'utf8');
-        serviceAccount = JSON.parse(credentialContent);
-        console.log('Successfully loaded Firebase credentials from secret file');
-      } else {
-        console.error('Firebase credential file not found at path:', credentialPath);
-      }
-    } catch (fileError) {
-      console.error('Error loading credentials from file:', fileError);
-      console.error(fileError.stack);
-    }
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    console.log('Successfully parsed Firebase service account');
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
+    // Or from a file path as fallback
+    serviceAccount = require(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
+    console.log('Loaded Firebase service account from file');
   }
 } catch (error) {
   console.error('Error loading Firebase credentials:', error);
-  console.error(error.stack);
 }
 
-// Initialize Firebase
-let db;
-try {
-  if (serviceAccount) {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-      projectId: process.env.FIREBASE_PROJECT_ID || serviceAccount.project_id,
-      databaseURL: process.env.FIREBASE_DATABASE_URL || `https://${serviceAccount.project_id}.firebaseio.com`
-    });
-    console.log('Firebase initialized with service account');
-  } else {
-    // Initialize with default config for development
-    admin.initializeApp({
-      projectId: process.env.FIREBASE_PROJECT_ID || 'solpixel-fresh'
-    });
-    console.log('Firebase initialized with default configuration');
-  }
-
-  db = admin.firestore();
-  console.log('Firestore database initialized');
-  
-  // Simple test to verify Firebase connection
-  const testCollection = db.collection('test_connection');
-  testCollection.doc('test').set({
-    timestamp: Date.now(),
-    message: 'Firebase connection successful!'
-  })
-  .then(() => {
-    console.log('✅ FIREBASE CONNECTION TEST SUCCESSFUL!');
-    console.log('You should now see a "test_connection" collection in your Firebase console');
-  })
-  .catch(error => {
-    console.error('❌ FIREBASE CONNECTION TEST FAILED:', error);
+// Initialize Firebase with project ID
+if (serviceAccount) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    projectId: process.env.FIREBASE_PROJECT_ID || serviceAccount.project_id || 'solplace-718d0',
+    databaseURL: process.env.FIREBASE_DATABASE_URL || `https://${serviceAccount.project_id || 'solplace-718d0'}.firebaseio.com`
   });
-  
-} catch (initError) {
-  console.error('Firebase initialization error:', initError);
-  console.error(initError.stack);
+  console.log('Firebase initialized with service account');
+} else {
+  // Initialize with default config for development
+  admin.initializeApp();
+  console.log('Firebase initialized with default configuration');
 }
 
-// Define Firestore collections (only if Firebase initialized successfully)
-let pixelsCollection, statsDoc, transactionCache;
-if (db) {
-  pixelsCollection = db.collection('pixels');
-  statsDoc = db.collection('stats').doc('global');
-  transactionCache = db.collection('transactionCache');
-
-  // After Firebase is initialized successfully, test the connection and create collections if needed
-  console.log('Testing Firebase connection and creating collections if needed...');
-  
-  // Function to create collection if it doesn't exist
-  async function ensureCollectionExists(collectionName) {
-    try {
-      const testDoc = db.collection(collectionName).doc('test');
-      await testDoc.set({
-        created: Date.now(),
-        test: true
-      });
-      await testDoc.delete(); // Clean up test document
-      console.log(`✅ Collection '${collectionName}' verified/created`);
-      return true;
-    } catch (error) {
-      console.error(`❌ Failed to verify collection '${collectionName}':`, error);
-      return false;
-    }
-  }
-  
-  // Create necessary collections
-  Promise.all([
-    ensureCollectionExists('pixels'),
-    ensureCollectionExists('stats'),
-    ensureCollectionExists('transactionCache')
-  ]).then(results => {
-    if (results.every(success => success)) {
-      console.log('All Firebase collections are ready');
-      
-      // Create stats document if it doesn't exist
-      statsDoc.get().then(doc => {
-        if (!doc.exists) {
-          statsDoc.set({
-            totalBurned: 0,
-            lastUpdate: Date.now()
-          }).then(() => {
-            console.log('Created initial stats document');
-          }).catch(error => {
-            console.error('Error creating stats document:', error);
-          });
-        }
-      }).catch(error => {
-        console.error('Error checking stats document:', error);
-      });
-    }
-  }).catch(error => {
-    console.error('Error creating collections:', error);
-  });
-}
-
-// Wrapper function to safely perform Firebase operations with fallback
-async function safeFirebaseOperation(operationName, operation, fallbackValue) {
-  if (!db) {
-    return fallbackValue;
-  }
-  
-  try {
-    const result = await operation();
-    return result;
-  } catch (error) {
-    console.error(`Firebase operation '${operationName}' failed:`, error.message);
-    return fallbackValue;
-  }
-}
+// Firebase collections will be created automatically when first accessed
+const db = admin.firestore();
+const pixelsCollection = db.collection('pixels');
+const statsDoc = db.collection('stats').doc('global');
+const transactionCache = db.collection('transactionCache');
 
 const app = express();
 const server = http.createServer(app);
@@ -224,94 +107,43 @@ function logFirebaseError(operation, error) {
   console.error(`Stack trace: ${error.stack || 'N/A'}`);
 }
 
-// Load pixel data from Firebase with automatic collection creation
+// Load pixel data from Firebase
 async function loadPixelData() {
   try {
     console.log('Loading pixel data from Firebase...');
     
-    // If Firebase isn't initialized properly, fall back to empty canvas
-    if (!db || !statsDoc || !pixelsCollection) {
-      console.error('Firebase not properly initialized, falling back to empty canvas');
-      initializeEmptyCanvas();
-      return false;
+    // Get stats - will create this document if it doesn't exist
+    const statsSnapshot = await statsDoc.get();
+    if (statsSnapshot.exists) {
+      const statsData = statsSnapshot.data();
+      totalBurned = statsData.totalBurned || 0;
+      console.log(`Loaded total burned: ${totalBurned}`);
+    } else {
+      // Initialize stats if not exists
+      await statsDoc.set({
+        totalBurned: 0,
+        lastUpdate: Date.now()
+      });
+      console.log('Created new stats document');
     }
     
-    // Get or create stats document using the safe operation wrapper
-    const statsData = await safeFirebaseOperation('get stats document', async () => {
-      const statsSnapshot = await statsDoc.get();
-      if (!statsSnapshot.exists) {
-        console.log('Stats document does not exist, creating it...');
-        await statsDoc.set({
-          totalBurned: 0,
-          lastUpdate: Date.now()
-        });
-        return { totalBurned: 0 };
-      } else {
-        return statsSnapshot.data();
-      }
-    }, { totalBurned: 0 });
-    
-    totalBurned = statsData.totalBurned || 0;
-    console.log(`Loaded total burned: ${totalBurned}`);
-    
-    // Get all pixels or initialize empty
-    const pixelsExist = await safeFirebaseOperation('check pixels collection', async () => {
-      const pixelsSnapshot = await pixelsCollection.limit(1).get();
-      return !pixelsSnapshot.empty;
-    }, false);
-    
+    // Get all pixels - if none exist yet, this just returns an empty array
+    const pixelsSnapshot = await pixelsCollection.get();
     pixelState = {};
     
-    if (!pixelsExist) {
-      console.log('Pixels collection is empty or does not exist, initializing empty canvas');
-      initializeEmptyCanvas();
-      
-      // Create sample pixels to ensure collection exists
-      await safeFirebaseOperation('create sample pixels', async () => {
-        console.log('Creating sample pixels to initialize collection...');
-        
-        // Create the four corners as sample points
-        const corners = [
-          {x: 0, y: 0},
-          {x: 0, y: CANVAS_SIZE-1},
-          {x: CANVAS_SIZE-1, y: 0},
-          {x: CANVAS_SIZE-1, y: CANVAS_SIZE-1}
-        ];
-        
-        for (const {x, y} of corners) {
-          const pixelId = `${x}_${y}`;
-          await pixelsCollection.doc(pixelId).set({
-            x, y,
-            color: '#ffffff',
-            wallet: null,
-            timestamp: Date.now()
-          });
-        }
-        
-        console.log('Successfully created sample pixels');
-      }, null);
-    } else {
-      console.log('Pixels collection exists, loading all pixels...');
-      
-      // Load pixels with safe operation
-      await safeFirebaseOperation('load all pixels', async () => {
-        const fullPixelsSnapshot = await pixelsCollection.get();
-        
-        fullPixelsSnapshot.forEach(doc => {
-          const pixel = doc.data();
-          const key = `${pixel.x},${pixel.y}`;
-          pixelState[key] = {
-            color: pixel.color,
-            wallet: pixel.wallet,
-            timestamp: pixel.timestamp
-          };
-        });
-        
-        console.log(`Loaded ${Object.keys(pixelState).length} pixels from Firestore`);
-      }, null);
-    }
+    pixelsSnapshot.forEach(doc => {
+      const pixel = doc.data();
+      const key = `${pixel.x},${pixel.y}`;
+      pixelState[key] = {
+        color: pixel.color,
+        wallet: pixel.wallet,
+        timestamp: pixel.timestamp
+      };
+    });
     
-    // Fill in any missing pixels with white in memory
+    console.log(`Loaded ${Object.keys(pixelState).length} pixels from Firestore`);
+    
+    // Fill in any missing pixels with white
     for (let y = 0; y < CANVAS_SIZE; y++) {
       for (let x = 0; x < CANVAS_SIZE; x++) {
         const key = `${x},${y}`;
@@ -325,11 +157,13 @@ async function loadPixelData() {
       }
     }
     
-    // Verify transaction cache collection exists
-    await safeFirebaseOperation('verify transaction cache', async () => {
-      const cacheSnapshot = await transactionCache.limit(1).get();
-      console.log(`Transaction cache collection ${cacheSnapshot.empty ? 'is empty' : 'has data'}`);
-    }, null);
+    // Load transaction cache
+    try {
+      const cacheSnapshot = await transactionCache.get();
+      console.log(`Loaded ${cacheSnapshot.size} transaction verification entries from cache`);
+    } catch (cacheError) {
+      console.error('Error loading transaction cache:', cacheError);
+    }
     
     return true;
   } catch (error) {
@@ -357,13 +191,9 @@ function initializeEmptyCanvas() {
   }
 }
 
-// Save pixel to Firebase with better error handling
+// Save pixel to Firebase
 async function savePixel(x, y, color, wallet, timestamp) {
-  return await safeFirebaseOperation('save pixel', async () => {
-    if (!db || !pixelsCollection) {
-      throw new Error('Firebase not initialized');
-    }
-    
+  try {
     const pixelId = `${x}_${y}`;
     await pixelsCollection.doc(pixelId).set({
       x,
@@ -375,36 +205,33 @@ async function savePixel(x, y, color, wallet, timestamp) {
     
     console.log(`Saved pixel at (${x},${y}) to Firestore`);
     return true;
-  }, false);
+  } catch (error) {
+    logFirebaseError('save pixel', error);
+    return false;
+  }
 }
 
 // Update total burned tokens
 async function updateTotalBurned(amount) {
-  // Always update in-memory value
-  totalBurned += amount;
-  
-  return await safeFirebaseOperation('update total burned', async () => {
-    if (!db || !statsDoc) {
-      throw new Error('Firebase not initialized');
-    }
-    
+  try {
     await statsDoc.update({
       totalBurned: admin.firestore.FieldValue.increment(amount),
       lastUpdate: Date.now()
     });
     
+    totalBurned += amount;
     console.log(`Updated total burned: +${amount}, new total: ${totalBurned}`);
     return true;
-  }, false);
+  } catch (error) {
+    logFirebaseError('update total burned', error);
+    totalBurned += amount; // Still update in memory even if Firebase fails
+    return false;
+  }
 }
 
 // Cache transaction verification results
 async function cacheTransaction(signature, isValid) {
-  return await safeFirebaseOperation('cache transaction', async () => {
-    if (!db || !transactionCache) {
-      throw new Error('Firebase not initialized');
-    }
-    
+  try {
     await transactionCache.doc(signature).set({
       signature,
       isValid,
@@ -413,16 +240,15 @@ async function cacheTransaction(signature, isValid) {
     
     console.log(`Cached transaction verification: ${signature} = ${isValid}`);
     return true;
-  }, false);
+  } catch (error) {
+    console.error('Error caching transaction:', error);
+    return false;
+  }
 }
 
 // Check if transaction is already verified in cache
 async function checkTransactionCache(signature) {
-  return await safeFirebaseOperation('check transaction cache', async () => {
-    if (!db || !transactionCache) {
-      throw new Error('Firebase not initialized');
-    }
-    
+  try {
     const doc = await transactionCache.doc(signature).get();
     if (doc.exists) {
       const data = doc.data();
@@ -430,7 +256,10 @@ async function checkTransactionCache(signature) {
       return { cached: true, isValid: data.isValid };
     }
     return { cached: false };
-  }, { cached: false });
+  } catch (error) {
+    console.error('Error checking transaction cache:', error);
+    return { cached: false };
+  }
 }
 
 // Handle RPC errors with retry
@@ -512,15 +341,8 @@ async function verifyTransaction(signature, expectedAmount, walletAddress) {
         }
         
         // Check if wallet has placed pixels before
-        const hasPlacedBefore = await safeFirebaseOperation('check previous pixels', async () => {
-          if (db && pixelsCollection) {
-            const previousPixels = await pixelsCollection.where('wallet', '==', walletAddress).limit(1).get();
-            return !previousPixels.empty;
-          }
-          return false;
-        }, false);
-        
-        if (hasPlacedBefore) {
+        const previousPixels = await pixelsCollection.where('wallet', '==', walletAddress).limit(1).get();
+        if (!previousPixels.empty) {
           console.log('Wallet has placed valid pixels before, allowing placement');
           await cacheTransaction(signature, true);
           return true;
@@ -711,9 +533,9 @@ app.post('/place-pixel', async (req, res) => {
     
     // Save to Firebase - retry up to 3 times if needed
     let saveSuccess = false;
+    let retries = 0;
     
-    // Try saving to Firebase if it's initialized
-    if (db && pixelsCollection && statsDoc) {
+    while (!saveSuccess && retries < 3) {
       try {
         // Use Promise.all to run both operations in parallel
         await Promise.all([
@@ -722,12 +544,18 @@ app.post('/place-pixel', async (req, res) => {
         ]);
         saveSuccess = true;
       } catch (saveError) {
-        console.error(`Firebase save error:`, saveError);
+        retries++;
+        console.error(`Firebase save error (attempt ${retries}/3):`, saveError);
+        
+        if (retries >= 3) {
+          console.error('Failed to save to Firebase after 3 attempts');
+          // Continue, we'll still send a response to the client
+          break;
+        }
+        
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
-    } else {
-      console.log('Firebase not initialized, skipping database save');
-      // Still update in-memory totals
-      totalBurned += COST_PER_PIXEL;
     }
     
     // Broadcast update to all connected clients
