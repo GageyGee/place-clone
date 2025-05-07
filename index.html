@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SolPixel - Inspired by r/place</title>
+    <title>SolPlace - Pixel Art on Solana</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <style>
@@ -459,10 +459,10 @@
         <div id="sidebar">
             <div class="header-container">
                 <div class="logo-container">
-                    <h1 class="logo">SolPixel</h1>
+                    <h1 class="logo">SolPlace</h1>
                     <p style="color: #666; font-size: 14px;">Collaborative art on Solana, inspired by r/place.</p>
                 </div>
-                <a href="https://x.com/SolPixel_io" target="_blank" class="twitter-link" title="Follow us on X/Twitter">𝕏</a>
+                <a href="https://x.com/SolPlace_io" target="_blank" class="twitter-link" title="Follow us on X/Twitter">𝕏</a>
             </div>
             
             <div class="card">
@@ -482,7 +482,7 @@
             <div class="stats">
                 <div class="stat-card">
                     <div class="stat-value" id="balance">0</div>
-                    <div class="stat-label">$PIXEL Balance</div>
+                    <div class="stat-label">$PLACE Balance</div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-value">100</div>
@@ -492,7 +492,7 @@
             
             <div class="burn-stats">
                 <div class="burn-value" id="burned-amount">0</div>
-                <div class="burn-label">$PIXEL Burned Total</div>
+                <div class="burn-label">$PLACE Burned Total</div>
             </div>
             
             <button id="place-pixel" onclick="placePixel()" disabled>Place Pixel</button>
@@ -500,7 +500,7 @@
             <div id="status-message">Connect your wallet to start</div>
             
             <div class="footer-buttons">
-                <button id="contract-address-btn" onclick="copyContractAddress()">Copy $PIXEL CA</button>
+                <button id="contract-address-btn" onclick="copyContractAddress()">Copy $PLACE CA</button>
                 <button id="how-it-works-btn" onclick="showHowItWorks()">How It Works</button>
             </div>
         </div>
@@ -515,17 +515,17 @@
     <div id="how-it-works-modal" class="modal">
         <div class="modal-content">
             <span class="close" onclick="closeModal()">&times;</span>
-            <h2>How SolPixel Works</h2>
+            <h2>How SolPlace Works</h2>
             
             <h3>Getting Started</h3>
-            <p>SolPixel is a collaborative pixel art canvas on Solana where creativity meets blockchain technology.</p>
+            <p>SolPlace is a collaborative pixel art canvas on Solana where creativity meets blockchain technology.</p>
             
             <ul>
                 <li>Connect your Phantom wallet</li>
-                <li>Ensure you have $PIXEL tokens</li>
+                <li>Ensure you have $PLACE tokens</li>
                 <li>Click any pixel on the canvas</li>
                 <li>Select your desired color</li>
-                <li>Pay 100 $PIXEL to place your pixel</li>
+                <li>Pay 100 $PLACE to place your pixel</li>
             </ul>
             
             <h3>Features</h3>
@@ -543,7 +543,7 @@
                 <div class="feature-item">
                     <div class="feature-icon">🔥</div>
                     <h4>Token Burning</h4>
-                    <p>$PIXEL deflationary</p>
+                    <p>$PLACE deflationary</p>
                 </div>
                 <div class="feature-item">
                     <div class="feature-icon">🌐</div>
@@ -553,7 +553,7 @@
             </div>
             
             <h3>Deflationary Mechanism</h3>
-            <p>Every pixel placement burns 100 $PIXEL tokens, removing them from circulation and increasing scarcity over time.</p>
+            <p>Every pixel placement burns 100 $PLACE tokens, removing them from circulation and increasing scarcity over time.</p>
             
             <h3>Dev Allocation</h3>
             <p>The development team holds 2% of the token supply, which is locked for 3 months and then vested over a period of 1 year. These funds will be used to cover server costs, scaling infrastructure, and future feature development.</p>
@@ -562,7 +562,7 @@
             <ul>
                 <li>Use scroll to zoom in/out on the canvas</li>
                 <li>Collaborate with others to create art</li>
-                <li>Check your $PIXEL balance before placing multiple pixels</li>
+                <li>Check your $PLACE balance before placing multiple pixels</li>
                 <li>Be creative and respectful of others' work</li>
             </ul>
         </div>
@@ -575,7 +575,7 @@
         const API_URL = 'https://place-clone-backend.onrender.com';
         const WS_URL = 'wss://place-clone-backend.onrender.com';
         
-        const SPLACE_TOKEN = '38KWMyCbPurCgqqwx5JG4EouREtjwcCaDqvL9KNGsvDf';
+        const SPLACE_TOKEN = 'DQNehPFiu3jaVxqLnotGVpppsLy1qeAQeKSuxSHepump';
         const BURN_ADDRESS = '1nc1nerator11111111111111111111111111111111';
         const COST_PER_PIXEL = 100; // Updated from 10000 to 100
         const TOKEN_DECIMALS = 6;
@@ -931,7 +931,7 @@
                         // Format balance to display the actual token amount (accounting for decimals)
                         const actualAmount = Number(amount) / Math.pow(10, TOKEN_DECIMALS);
                         balanceSpan.textContent = formatBalance(Number(amount));
-                        console.log(`Wallet has ${actualAmount} $PIXEL tokens`);
+                        console.log(`Wallet has ${actualAmount} $PLACE tokens`);
                     } else {
                         balanceSpan.textContent = '0';
                     }
@@ -1288,7 +1288,7 @@
         
         // Initialize the app with better error handling
         async function initApp() {
-            console.log('Initializing SolPixel app...');
+            console.log('Initializing SolPlace app...');
             
             initCanvas();
             
