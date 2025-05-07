@@ -5,29 +5,42 @@ const cors = require('cors');
 const { Connection, PublicKey, ComputeBudgetProgram } = require('@solana/web3.js');
 const { getAccount, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 const admin = require('firebase-admin');
+const fs = require('fs');
 
-// Initialize Firebase Admin (serverless-compatible)
+// Initialize Firebase Admin (with enhanced support for secret files)
 let serviceAccount;
 try {
   // Try to load from environment variable
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     try {
       serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-      console.log('Successfully parsed Firebase service account');
+      console.log('Successfully parsed Firebase service account from environment variable');
       
       // Fix the private key format - IMPORTANT FIX
       if (serviceAccount.private_key && serviceAccount.private_key.includes('\\n')) {
         serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
         console.log('Fixed private key format for PEM');
       }
-      
     } catch (parseError) {
-      console.error('Failed to parse Firebase service account:', parseError);
+      console.error('Failed to parse Firebase service account from environment variable:', parseError);
       console.error(parseError.stack);
     }
-  } else if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
-    // Or from a file path as fallback
-    serviceAccount = require(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
+  } 
+  // Try to load from secret file
+  else if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
+    try {
+      const credentialPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+      if (fs.existsSync(credentialPath)) {
+        const credentialContent = fs.readFileSync(credentialPath, 'utf8');
+        serviceAccount = JSON.parse(credentialContent);
+        console.log('Successfully loaded Firebase credentials from secret file');
+      } else {
+        console.error('Firebase credential file not found at path:', credentialPath);
+      }
+    } catch (fileError) {
+      console.error('Error loading credentials from file:', fileError);
+      console.error(fileError.stack);
+    }
   }
 } catch (error) {
   console.error('Error loading Firebase credentials:', error);
@@ -40,20 +53,35 @@ try {
   if (serviceAccount) {
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
-      projectId: process.env.FIREBASE_PROJECT_ID || serviceAccount.project_id || 'solplace-718d0',
-      databaseURL: process.env.FIREBASE_DATABASE_URL || `https://${serviceAccount.project_id || 'solplace-718d0'}.firebaseio.com`
+      projectId: process.env.FIREBASE_PROJECT_ID || serviceAccount.project_id,
+      databaseURL: process.env.FIREBASE_DATABASE_URL || `https://${serviceAccount.project_id}.firebaseio.com`
     });
     console.log('Firebase initialized with service account');
   } else {
     // Initialize with default config for development
     admin.initializeApp({
-      projectId: process.env.FIREBASE_PROJECT_ID || 'solplace-718d0'
+      projectId: process.env.FIREBASE_PROJECT_ID || 'solpixel-fresh'
     });
     console.log('Firebase initialized with default configuration');
   }
 
   db = admin.firestore();
   console.log('Firestore database initialized');
+  
+  // Simple test to verify Firebase connection
+  const testCollection = db.collection('test_connection');
+  testCollection.doc('test').set({
+    timestamp: Date.now(),
+    message: 'Firebase connection successful!'
+  })
+  .then(() => {
+    console.log('✅ FIREBASE CONNECTION TEST SUCCESSFUL!');
+    console.log('You should now see a "test_connection" collection in your Firebase console');
+  })
+  .catch(error => {
+    console.error('❌ FIREBASE CONNECTION TEST FAILED:', error);
+  });
+  
 } catch (initError) {
   console.error('Firebase initialization error:', initError);
   console.error(initError.stack);
@@ -725,6 +753,16 @@ app.post('/place-pixel', async (req, res) => {
     console.error('Place pixel error:', error);
     res.status(500).json({ error: error.message });
   }
+});
+
+// Health check endpoint (useful for Render)
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok',
+    firebase: !!db,
+    pixelsLoaded: Object.keys(pixelState).length > 0,
+    totalBurned: totalBurned
+  });
 });
 
 // WebSocket connection handler
