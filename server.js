@@ -2,24 +2,38 @@ const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
+const fs = require('fs'); // Added fs module for reading secret files
 const { Connection, PublicKey, ComputeBudgetProgram } = require('@solana/web3.js');
 const { getAccount, getAssociatedTokenAddress, TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 const admin = require('firebase-admin');
 
-// Initialize Firebase Admin (serverless-compatible)
+// Initialize Firebase Admin (using secret file approach)
 let serviceAccount;
 try {
-  // Try to load from environment variable
-  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    console.log('Successfully parsed Firebase service account');
-  } else if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
-    // Or from a file path as fallback
-    serviceAccount = require(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
-    console.log('Loaded Firebase service account from file');
+  // Try to load from secret file path first (preferred method)
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_PATH) {
+    try {
+      const rawData = fs.readFileSync(process.env.FIREBASE_SERVICE_ACCOUNT_PATH);
+      serviceAccount = JSON.parse(rawData);
+      console.log('Successfully loaded Firebase credentials from secret file');
+    } catch (fileError) {
+      console.error('Error loading credentials from file:', fileError);
+      console.error(fileError.stack);
+    }
+  } 
+  // Fall back to environment variable if file not available
+  else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    try {
+      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      console.log('Successfully parsed Firebase service account from environment variable');
+    } catch (parseError) {
+      console.error('Failed to parse Firebase service account from environment variable:', parseError);
+      console.error(parseError.stack);
+    }
   }
 } catch (error) {
   console.error('Error loading Firebase credentials:', error);
+  console.error(error.stack);
 }
 
 // Initialize Firebase with project ID
@@ -34,6 +48,27 @@ if (serviceAccount) {
   // Initialize with default config for development
   admin.initializeApp();
   console.log('Firebase initialized with default configuration');
+}
+
+// Simple verification of Firebase setup
+try {
+  const db = admin.firestore();
+  console.log('Firestore database initialized');
+  
+  // Test ability to access Firestore
+  db.collection('_test_').doc('test').set({
+    timestamp: Date.now(),
+    message: 'Firebase connection test'
+  }, { merge: true })
+  .then(() => {
+    console.log('✅ FIREBASE CONNECTION TEST SUCCESSFUL!');
+    console.log('Created test document in Firestore');
+  })
+  .catch(error => {
+    console.error('❌ FIREBASE CONNECTION TEST FAILED:', error);
+  });
+} catch (dbError) {
+  console.error('Error initializing Firestore:', dbError);
 }
 
 // Firebase collections will be created automatically when first accessed
